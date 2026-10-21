@@ -6,6 +6,8 @@ The initial integration route described by this project is **ServiceNow read-onl
 
 ## Read in order
 
+Start with [How the SRE agent works](HUMAN-GUIDE.md) for the human walkthrough and Mermaid system/sequence diagrams. It explains the incident flow, the roles of people and models, collaboration, recovery approval, and restart/restore behavior before the setup details below.
+
 | Reader | Start here | Next |
 | --- | --- | --- |
 | Developer or technical lead | This handoff and [architecture](ARCHITECTURE.md) | [Integration checklist](ALLY-INTEGRATION-CHECKLIST.md), then the relevant operational guide |

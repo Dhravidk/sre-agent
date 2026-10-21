@@ -4,7 +4,7 @@ Be skeptical, double-check claims, and distinguish observed behavior from assump
 
 ## Start here
 
-1. Read [README.md](README.md), [the Ally handoff](docs/ALLY-HANDOFF.md), and [the integration checklist](docs/ALLY-INTEGRATION-CHECKLIST.md).
+1. Read [README.md](README.md), [the human system walkthrough and Mermaid diagrams](docs/HUMAN-GUIDE.md), [the Ally handoff](docs/ALLY-HANDOFF.md), and [the integration checklist](docs/ALLY-INTEGRATION-CHECKLIST.md).
 2. Read [the architecture](docs/ARCHITECTURE.md) before changing runtime boundaries. For an Ally implementation request, use [the implementation brief](docs/ALLY-AGENT-PROMPT.md).
 3. Inspect `package.json`, the relevant source, and its tests. Dated checkpoints in `docs/` describe earlier work; their test counts and private evidence paths do not establish the current checkout's results.
 4. Establish a baseline with Node.js 24+ and pnpm 11.25.0: `pnpm install --frozen-lockfile`, then `pnpm test`. Report failures honestly. Do not regenerate the lockfile without a dependency change.

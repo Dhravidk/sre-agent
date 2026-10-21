@@ -7,7 +7,7 @@ Copy this prompt, adding the actual service/environment and approved sources of 
 ```text
 Implement this SRE agent for our approved Ally service and non-production environment.
 
-Read AGENTS.md and CLAUDE.md, then docs/ALLY-HANDOFF.md,
+Read AGENTS.md and CLAUDE.md, then docs/HUMAN-GUIDE.md, docs/ALLY-HANDOFF.md,
 docs/ALLY-INTEGRATION-CHECKLIST.md and docs/ARCHITECTURE.md.
 Inspect the code and tests rather than relying on historical checkpoint claims.
 

@@ -21,3 +21,9 @@ The fresh-clone attempt initially exposed concurrent first-time creation of the 
 The offline smoke service and its owned listener were closed after verification. Logs, inventories and synthetic databases remain in the ignored `.local/repository-handoff/` directory on the originating machine; they are not distributed with this repository.
 
 No Ally provider access, enterprise Claude authentication, live Ally Teams installation, production database topology, container build, cloud deployment or real deployment execution was verified in this handoff. Use [the integration acceptance checklist](ALLY-INTEGRATION-CHECKLIST.md#acceptance-record-to-complete-in-ally) for the receiving environment. Dated earlier trial reports retain their own stated scope.
+
+## Human documentation and Mermaid follow-up
+
+The documentation-only follow-up adds [How the SRE agent works](HUMAN-GUIDE.md), links it from the human and agent entry points, and puts a system overview in the README. The human guide explains the running host, Claude analysis, engineering agents, evidence, shared incidents, approvals, and operational failures in plain language.
+
+All six Mermaid diagrams across the README, human guide, and architecture page were rendered locally with Mermaid CLI 11.17.0 and visually inspected. Repository-relative Markdown links/anchors, documented local command names, and whitespace were checked. No application source, dependencies, configuration behavior, or runtime tests changed in this follow-up; the full-suite result above describes the unchanged runtime source. Rendering tools, preview PNGs, and logs remain private validation artifacts rather than project dependencies.
