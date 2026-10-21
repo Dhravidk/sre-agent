@@ -34,9 +34,12 @@ Preparation preserves the original rows and uncertainty:
 | Poll/operations checkpoints | Reset so fresh source reads and active-issue inventories run. A lost post-backup event remains absent until redelivery or reimport. |
 | Managed contact-message provenance and prepared send bodies | Retained as historical evidence. A prepared body is not proof of delivery. Positive contact-publication receipts reset; new notices require reconciliation and use the restore generation. |
 | Teams prepared sends, outcomes and late transport observations | Retained as historical evidence. Late receipts do not automatically replace unknown state. Runtime delivery/conversation leases reset with other locks; stop old agents and reconcile the missing interval before release. |
+| Completed local rehearsal dataset metadata | The exact `rehearsal:multi-team:v1` checkpoint is retained as historical dataset identity. The launcher still validates its checksum, profile and existing incident/ticket identities. Reopening does not rerun setup or release the restore hold. Incomplete or absent rehearsal metadata prevents automatic seeding after any restore generation, including a released one. |
 | Committed provider retry waits | Snapshot deadlines remain in sre_provider_retries. Later extensions and newly observed waits are lost with the missing interval and must not be inferred from the older snapshot. |
 
 Start in rules mode for read-only investigation during reconciliation. Model work is held while the fence is active unless the runtime explicitly uses its rules-only recovery path. Deployment approvals/dispatch, Teams command processing, delivery and operational notices remain held. New read-only analysis notices are saved as held_restore; they will not be replayed when the hold ends. Signed no-change callbacks may reconcile a known workflow, but health verification cannot resolve an incident under the global hold. The console/operations API reports database_restore_hold. Restarting does not clear it.
+
+The rehearsal launcher's `ready.json` and startup record explicitly report `recoveryHold` and the restore ID. Ready means that the console has opened its retained dataset. A hold still prevents outbound actions. Older restored copies whose dataset checkpoint was already deleted are not reconstructed automatically; use the generic rules-mode console with an explicit database/configuration for inspection, or recover reviewed matching dataset metadata from independent records. Do not reseed an existing restored history.
 
 ## Reconcile, then authorize release
 

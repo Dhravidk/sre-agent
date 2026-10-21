@@ -16,7 +16,7 @@ function context() {
   const now=Date.now(),c={incident:{id:'inc_claude',service_key:'auction-local',issue_key:'P-CLAUDE',title:'Synthetic incident',status:'open',started_at:now-1000,updated_at:now,revision:1,analysis:null},session:{agent_id:'agent_claude',remote_state:{sessionId:'older-eve-session',private:'PRIVATE_SESSION_MARKER'}},evidence:[{id:'human',source:'teams',kind:'responder_update',observed_at:now,content:{text:'PRIVATE_RESPONDER_MARKER: restarted the bidder; timeout persists.'}}],deployments:[],assessmentHistory:[],responderContext:{evidenceIds:['human'],totalAvailable:1},jobs:[{error:'PRIVATE_AUDIT_MARKER'}]};
   c.riskScope=riskScope(c,{environment:'local'});return c;
 }
-function analysis(c=context()) {const risk=fixtureRisk(c);risk.sourceQuality=[];risk.contraryEvidenceIds=[];return {summary:'Synthetic Claude transport result',hypotheses:['A dependency fault remains possible.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live provider and model acceptance pending.'],nextSteps:['Review current independent telemetry.'],risk};}
+function analysis(c=context()) {const risk=fixtureRisk(c);risk.sourceQuality=[];risk.contraryEvidenceIds=[];return {summary:'Synthetic Claude transport result',hypotheses:['A dependency fault remains possible.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live provider and model acceptance pending.'],nextSteps:['Review current independent telemetry.'],risk,codeFindings:[],teamsMessages:[],issueSpec:{title:'Review incident',problem:'Cause unknown.',impact:'Needs review.',proposedChange:'Collect evidence.',acceptanceCriteria:['Reproduce the symptom.'],evidenceIds:[],openQuestions:['What failed?']}};}
 const envelope=data=>({type:'result',subtype:'success',is_error:false,structured_output:data,session_id:'d24b9e23-744a-4682-a20f-805de41a7153'});
 async function fixture(body,options={}) {
   const directory=await mkdtemp(join(tmpdir(),'sre-cli-test-')),command=join(directory,'fake-claude'),record=join(directory,'record.json');
@@ -39,6 +39,7 @@ test('Claude print mode receives bounded incident context on stdin, restricted t
     const result=await f.reasoner.investigate(c,{question:'Explain the reported restart.',persistRemote:async state=>saved.push(state)}),record=await f.read();
     assert.equal(result.analysis.mode,'claude');assert.equal(saved[0].phase,'started');assert.equal(saved[0].invocationId,result.remoteState.invocationId);assert.equal(result.remoteState.phase,'completed');
     assert.equal(record.args[0],'-p');assert.ok(record.args.includes('--restricted'));assert.equal(record.args[record.args.indexOf('--tools')+1],'');assert.equal(record.args[record.args.indexOf('--model')+1],'sonnet');
+    assert.equal(record.args[record.args.indexOf('--effort')+1],'medium');
     assert.ok(record.args.includes('--no-session-persistence'));assert.ok(record.args.includes('--strict-mcp-config'));assert.ok(!record.args.includes('--resume'));assert.ok(!record.args.join(' ').includes('PRIVATE_RESPONDER_MARKER'));
     const schema=JSON.parse(record.args[record.args.indexOf('--json-schema')+1]);assert.equal(schema.properties.summary.minLength,1);assert.equal(schema.properties.summary.maxLength,600);
     assert.ok(JSON.stringify(record.request).includes('PRIVATE_RESPONDER_MARKER'));assert.ok(Buffer.byteLength(JSON.stringify(record.request.incident))<=160000);assert.ok(!JSON.stringify(record.request).includes('PRIVATE_AUDIT_MARKER'));assert.ok(!JSON.stringify(record.request).includes('PRIVATE_SESSION_MARKER'));
@@ -99,9 +100,16 @@ test('Claude account quota errors expose a fixed actionable message without refl
     runtime=await createSreRuntime({config,autoStart:false});
     const seeded=await seedDemo(runtime.store,config.services[0]);assert.equal(await runtime.worker.runOnce(),false);
     const c=await runtime.store.context(seeded.incidentId);assert.equal(c.incident.analysis,null);
-    assert.equal(c.jobs.find(j=>j.status==='dead').attempts,1);assert.match(c.jobs.find(j=>j.status==='dead').error,/Retry investigation/);
+    assert.equal(c.jobs.find(j=>j.status==='pending').attempts,0);assert.match(c.jobs.find(j=>j.status==='pending').error,/resume the model queue/);
+    const hold=await runtime.store.modelQuota();assert.equal(hold.provider,'claude-cli');assert.equal(hold.resetLabel,'4:10pm America/Detroit');assert.equal(hold.retryAt,null);
     assert.equal(await runtime.worker.runOnce(),false);assert.equal((await runtime.store.conversation(seeded.incidentId)).length,0);
   } finally {await runtime?.close();await f.close();}
+});
+
+test('Claude hour-only reset labels remain operator guidance without an invented date',async()=>{
+  const f=await fixture(`process.stdout.write(JSON.stringify({type:'result',is_error:true,api_error_status:429,api_error:'usage_limit_reached',result:'PRIVATE_TEXT · resets 7pm (America/Detroit)'}));process.exitCode=1;`);
+  try {await assert.rejects(()=>f.reasoner.investigate(context()),error=>error.resetLabel==='7pm America/Detroit'&&error.retryAt===null&&!error.message.includes('PRIVATE_'));}
+  finally {await f.close();}
 });
 
 test('successive turns use the current Claude credentials instead of a stale constructor snapshot',async()=>{
@@ -125,6 +133,7 @@ test('connected configuration defaults to Claude without Eve/OpenAI credentials 
   assert.throws(()=>validateConfig({...structuredClone(config),claude:{bare:'true'}},env),/bare/);assert.throws(()=>claudeOptions({claude:{timeoutMs:0}}),/timeout/);
   assert.throws(()=>claudeOptions({claude:{command:'claude\n-p'}}),/executable/);assert.throws(()=>claudeOptions({claude:{maxBudgetUsd:0}}),/maxBudget/);
   assert.equal(claudeOptions({}, {SRE_CLAUDE_MODEL:''}).model,undefined);
+  assert.equal(claudeOptions({claude:{effort:'high'}},{SRE_CLAUDE_EFFORT:'low'}).effort,'low');assert.throws(()=>claudeOptions({claude:{effort:'unbounded'}}),/effort/);
   assert.equal(claudeEnvironment({ANTHROPIC_API_KEY:'synthetic',AWS_PROFILE:'ally-fixture',OPENAI_API_KEY:'blocked',SRE_API_TOKEN:'blocked'}).OPENAI_API_KEY,undefined);
   const local=loadConfig({});assert.throws(()=>validateConfig(local,{SRE_AGENT_MODE:'claude'}),/Local mode is offline/);
 });

@@ -21,6 +21,8 @@ These interfaces still need Ally-specific identities, service mappings, network 
 
 The offline reasoner recognizes a small set of known auction defects. It is a test mechanism, not a general code analyst. General investigations use the separately configured Claude runtime and require representative evaluation.
 
+Current development prioritizes [noisy Dynatrace-to-GitLab investigation](DYNATRACE-INVESTIGATION.md): explicit service/environment/time query scopes, Grail aggregates and priority/baseline windows, durable redacted log pages, rare-sample provenance, immutable source locations and actual-Claude recovery/specification drafts. Local high-volume inputs and sandbox source reads do not establish live Dynatrace acceptance; the read identity and tenant contract remain unverified.
+
 ## Clone and run an offline baseline
 
 Use an authorized GitHub identity that can read this private repository. Repository access is separate from Ally service access.
@@ -32,7 +34,7 @@ git clone https://github.com/Dhravidk/sre-agent.git
 cd sre-agent
 pnpm install --frozen-lockfile
 pnpm test
-pnpm sre:dev
+pnpm sre:lab
 ```
 
 Open `http://127.0.0.1:3001`. In a second terminal in the checkout:

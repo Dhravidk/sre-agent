@@ -40,8 +40,9 @@ flowchart LR
 | Polling, normalization, source lifecycle and scope | `src/sre/poller.mjs`, `normalize.mjs`, `source-state.mjs`, `poll-scope.mjs` |
 | Investigations and bounded model context | `src/sre/worker.mjs`, `reasoner.mjs`, `claude-reasoner.mjs`, `claude-config.mjs`, `model-context.mjs` |
 | Teams identity/routing, delivery, coordination and handoffs | `src/sre/teams.mjs`, `teams-access.mjs`, `teams-routing.mjs`, `teams-outbox.mjs`, `collaboration.mjs`, `work-handoffs.mjs` |
-| Ownership, plans, local QA and change history | `src/sre/casework.mjs`, `qa-approval.mjs`, `change-read.mjs`, `change-associations.mjs`, `change-timeline.mjs`, `ci-observations.mjs` |
-| Telemetry groups, log triggers and analytic checks | `src/sre/log-detection.mjs`, `signal-digest.mjs`, `monitors.mjs`, `analytic-risk.mjs`, `rule-attribution.mjs` |
+| Ownership, plans, local QA and change history | `src/sre/casework.mjs`, `qa-approval.mjs`, `change-read.mjs`, `change-associations.mjs`, `change-timeline.mjs`, `ci-observations.mjs`, `change-observation-notices.mjs` |
+| Telemetry groups, log triggers and analytic checks | `src/sre/log-detection.mjs`, `log-observation.mjs`, `signal-digest.mjs`, `monitors.mjs`, `analytic-risk.mjs`, `rule-attribution.mjs` |
+| Noisy Grail reads, durable log pages, sample selection and immutable source priority | `src/sre/dynatrace-log-investigation.mjs`, `log-triage.mjs`, `source-evidence.mjs` |
 | Recovery policy, submission, receipts and no-change outcomes | `src/sre/rollback.mjs`, `workflow-contract.mjs`, `submission.mjs`, `rollback-result.mjs`, `deployments.mjs` |
 | Health, restoration, offline transfer and delivery review | `src/sre/operations.mjs`, `recovery.mjs`, `restore-recovery.mjs`, `database-transfer.mjs`, `delivery-inspections.mjs` |
 | Browser console | `src/sre-web/` |
@@ -51,7 +52,8 @@ flowchart LR
 
 | Command | Default endpoint | Purpose |
 | --- | --- | --- |
-| `pnpm sre:dev` | `127.0.0.1:3001` | Persistent integration runtime and console; default offline rules |
+| `pnpm sre:dev` | `127.0.0.1:3010` | Unseeded Claude development runtime; approved connected profiles retain port 3001 |
+| `pnpm sre:lab` | `127.0.0.1:3001` | Explicit offline rules fixture console |
 | Same runtime with Teams enabled | Port `3978`, `/api/messages` | Teams SDK activity endpoint; `off`, local `playground`, or authenticated `live` |
 | `pnpm dev` | `127.0.0.1:3000` | Original synthetic auction website/API/test harness |
 | `pnpm sre:trial:demo` | `127.0.0.1:3002` | Synthetic ServiceNow MCP and collaboration demo; rules by default |
@@ -64,3 +66,17 @@ The optional Eve agent is a legacy alternative configured separately. It is not 
 Adapt approved schemas and identities through connector/configuration boundaries, preserving completeness and scope. Add an ownership importer against its existing authenticated snapshot contract. Put any new executor in a separately reviewed isolation boundary; the trusted local auction QA fixture is not that boundary. Keep actual release/health verification with the application and deployment owners.
 
 Do not replace SQL coordination with process-local state, put writer credentials into the model process, promote responder claims into independent verification, or infer deployment from source/CI timestamps. The implementation and tests establish detailed contracts; [the handoff](ALLY-HANDOFF.md) and [integration checklist](ALLY-INTEGRATION-CHECKLIST.md) identify what remains external.
+
+## Claude development iteration
+
+The [Claude development path](CLAUDE-AGENT-DEVELOPMENT.md) uses bounded NDJSON progress, general immutable source excerpts, validated candidate source locations/specifications and host-owned selected Teams messages. `agent-investigation.mjs`, `source-evidence.mjs`, `claude-stream.mjs` and `question-batch.mjs` implement these boundaries. SQL retains original questions and bounded batches, with durable last-served scheduling across incidents and per-room candidate ranking/checkpoints within an incident. Batching respects retry eligibility. The single-investigator lease remains unchanged. Configured incident audiences may contain up to 32 rooms; larger context summaries retain identities with explicit detail omissions. [Sustained group evaluation](SUSTAINED-GROUP-EVALUATION.md) exercises these boundaries with the actual model separately from live transport acceptance.
+
+The [Dynatrace investigation path](DYNATRACE-INVESTIGATION.md) queries structured aggregates, priority records and a broad baseline within a fixed budget. The worker gathers and reduces logs before immutable source reads, preserving redacted raw pages separately from derived samples. Selection is generic data reduction; Claude supplies the causal hypothesis and read-only remediation/specification. Counts, source excerpts and recovery proposals retain independent coverage and authority limits.
+
+The bounded snapshot reserves 8 KB for paged-log query manifests independently of the grouped-sample telemetry budget, within the existing 160 KB total. Raw-page IDs are projected out with explicit omission counts. Original pages/manifests remain in SQL. Query coverage, incompleteness and supplied auxiliary observations can therefore survive sample saturation without being promoted to verified health or independent derived corroboration. The larger-log regression and actual-model investigation exposed this need; a small fixture alone did not.
+
+`model-quota.mjs` persists host-parsed account usage caps under the single-investigator lock. One database has one configured investigator account. A cap preserves pending requests and blocks further claims across incidents, including after restart. The console and authenticated local/API endpoint can release the exact reviewed hold with an audited reason; Teams reports and model output cannot do so. A date-free provider reset label remains guidance. Ordinary transport retries, lease fencing and incident revision checks are unchanged.
+
+`scripts/lib/codex-evaluation-reasoner.mjs` is an explicit local evaluation alternative using the official Codex CLI's existing ChatGPT login. It is absent from production configuration and never an automatic fallback. The version-verified disabled execution host, filtered environment, ephemeral subprocess, bounded stdin/output and host validators preserve the investigation boundary. Its analysis and reports say `codex`; Claude results remain separate. The group workload pins provider identity and actual/test-double classification across resume.
+
+The [multi-incident workload](DYNATRACE-MULTI-INCIDENT-EVALUATION.md) exercises the same SQL worker with several open incidents and a bounded question burst. Operation/release diversity protects low-severity witnesses from severe noise. Structured problem operations prioritize safe source references; up to two of the existing four source slots can read referenced files outside a complete diff, marked unchanged. Model concurrency, action authority and durable fencing remain unchanged.

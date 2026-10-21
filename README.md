@@ -6,7 +6,7 @@ An SRE investigation and incident-collaboration prototype with a persistent Node
 
 **For a coding agent:** read [AGENTS.md](AGENTS.md). Claude Code also has [CLAUDE.md](CLAUDE.md). Use the [implementation brief](docs/ALLY-AGENT-PROMPT.md) to adapt the project in an approved Ally environment.
 
-Requires Node.js 24+, Git, and pnpm 11.25.0. Start the persistent integration console with:
+Requires Node.js 24+, Git, pnpm 11.25.0 and an installed/authenticated Claude CLI. The normal development command runs the actual model:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -14,9 +14,15 @@ pnpm test
 pnpm sre:dev
 ```
 
-Open **http://127.0.0.1:3001**. This defaults to offline rules and synthetic evidence. Ally credentials, internal mappings, verified enterprise MCP schemas, deployment workflows, and production acceptance are not included. Private/generated `.local/` trial evidence and credentials are excluded. Dated checkpoint counts below describe historical runs; rerun the suite for this checkout.
+Open **http://127.0.0.1:3010**. This starts a persistent Claude agent without seeded incidents, vendor readers, external Teams delivery or deployment execution. It never falls back to deterministic rules. Use an approved `SRE_CONFIG` for the existing connected runtime, or explicitly add `--case session-expiry` for fictional four-source evidence with real Claude reasoning. [Claude development and evaluation](docs/CLAUDE-AGENT-DEVELOPMENT.md) explains source localization, issue specifications, streaming and message-load checks.
 
-The [handoff verification record](docs/HANDOFF-VALIDATION.md) reports the clean-clone install, 1,203 passing tests, and offline service checks for this publication.
+Current development emphasizes [noisy Dynatrace investigations](docs/DYNATRACE-INVESTIGATION.md): bounded Grail aggregation and targeted reads, durable large-log retention, rare-signal samples, exact GitLab source locations, and Claude recovery/specification drafts. Run `pnpm sre:dynatrace:eval --live` for actual-model 1%–10% signal cases and rollback/dependency controls. Its telemetry and deployment claims are fictional; live tenant acceptance remains separate.
+
+`pnpm sre:dynatrace:multi:eval --live` runs [five simultaneous messy incidents](docs/DYNATRACE-MULTI-INCIDENT-EVALUATION.md) through the actual Claude worker, with shared-service evidence, a question burst, duplicate deliveries, peer-worker exclusion and restart. Source/telemetry readers are authored fixtures; the model must distinguish a compatible rollback, forward fixes, dependency mitigation and insufficient evidence.
+
+The original offline rules console remains available explicitly with `pnpm sre:lab` on port 3001. Ally credentials, internal mappings, verified enterprise MCP schemas, deployment workflows, and production acceptance are not included. Private/generated `.local/` evidence is excluded. Dated checkpoint counts describe historical runs rather than the current checkout.
+
+`pnpm sre:groups:eval --live` extends the [real-model evaluation to ten incidents and 32 groups](docs/SUSTAINED-GROUP-EVALUATION.md), with a sustained dominant-group message flood, scoped question batches, fair scheduling, restart and immutable source/recovery checks. Vendor evidence and group intake are local fixtures; model inference is real. Claude is the default; `--provider codex` explicitly uses the version-verified official Codex CLI for local development with an existing ChatGPT login. Providers and test-double results cannot be mixed when resuming.
 
 ## Smart Auction lab
 
@@ -86,7 +92,7 @@ The generated repository is the auction API under test. The surrounding reposito
 Run the integration service in a second terminal:
 
 ```sh
-pnpm sre:dev
+pnpm sre:lab
 ```
 
 Open **http://127.0.0.1:3001**. The console provides four full-flow fixtures: recent bidding regression, six-month-old feature, incompatible schema change, and dependency outage. The separate auction website remains on port 3000.
@@ -105,7 +111,7 @@ pnpm sre:teams "rollback <incident-id>"
 pnpm sre:ask <incident-id> "What evidence would change your assessment?"
 ```
 
-Local mode uses synthetic identities and only simulates rollback dispatch. It rejects live connectors and public binding. Outbound Teams messages remain in the database when the Teams sender is off. Use `SRE_TEAMS_MODE=playground pnpm sre:dev` to exercise the current database-backed bridge on port 3978, without live Teams credentials. The older `teams:playground` script belongs to the original port-3000 lab and should not be run on the same port concurrently.
+Local mode uses synthetic identities and only simulates rollback dispatch. It rejects live connectors and public binding. Outbound Teams messages remain in the database when the Teams sender is off. Use `SRE_TEAMS_MODE=playground pnpm sre:lab` to exercise the current database-backed bridge on port 3978, without live Teams credentials. The older `teams:playground` script belongs to the original port-3000 lab and should not be run on the same port concurrently.
 
 For an interactive trial, run `pnpm sre:trial:demo` and open **http://127.0.0.1:3002**. The launcher currently defaults to **offline rules with fictional provider evidence**, simulated Teams identities and simulated rollback dispatch. Two configured groups can join the same incident, exchange attributed briefings, report differing team states, and review the shared coordination view. No Claude inference runs by default. For the later actual-model trial, explicitly use `SRE_TRIAL_DEMO_AGENT_MODE=claude pnpm sre:trial:demo`. The ServiceNow fixture exposes the 45 permitted read tools over loopback MCP; live readers and Teams delivery remain disabled. Questions, responder reports, per-room deliveries and approval records persist in SQLite. See [multi-group coordination](docs/TEAMS-COORDINATION.md), [trial acceptance](docs/TRIAL-ACCEPTANCE.md), and [the unverified Ally MCP contract](docs/SERVICENOW-MCP.md).
 

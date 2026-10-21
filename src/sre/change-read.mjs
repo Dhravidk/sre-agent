@@ -109,7 +109,7 @@ export async function beginChangeRead(store,q,event,read,now){
 }
 export async function latestChangeState(q,serviceKey,provider,n,dialect){
   const parameters=[serviceKey,provider,String(n)],where="c.service_key=? AND c.provider=? AND c.change_number=? AND c.stage IN ('pre-merge','merge')";
-  const [latest]=await q('SELECT c.*,e.received_at,e.payload AS source_event FROM sre_change_events c JOIN sre_events e ON e.id=c.id WHERE '+where+' ORDER BY c.observed_at DESC,c.id DESC LIMIT 1',parameters);
+  const [latest]=await q('SELECT c.*,e.received_at,e.body_hash,e.payload AS source_event FROM sre_change_events c JOIN sre_events e ON e.id=c.id WHERE '+where+' ORDER BY c.observed_at DESC,c.id DESC LIMIT 1',parameters);
   if(!latest)return {latest:null,identities:[],conflicting:false};
   const field=(column,name)=>dialect==='postgres'?"("+column+"::jsonb->>'"+name+"')":"json_extract("+column+",'$."+name+"')";
   // Deduplicate identities in SQL before bounding the result. A hundred replay

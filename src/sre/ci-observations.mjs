@@ -45,6 +45,7 @@ function fact(row,service,scopeHash,ci){
     return {eventId:row.id,projectId:ci.projectId,pipelineId:p.id,sha:p.sha,status:p.status,providerUpdatedAt:time.at,timeKind:time.kind,receivedAt:Number(row.received_at),scoped};
   }catch{throw new StorageError(new Error('Invalid saved pipeline observation or scope projection'));}
 }
+export {fact as parseSavedPipelineFact};
 
 export async function reconcileReadCI(q,service,receipt,dialect){
   const ci=receipt.ci;if(receipt.provider!=='gitlab'||ci?.state!=='observed')return ci;

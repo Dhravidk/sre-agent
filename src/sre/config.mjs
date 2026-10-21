@@ -6,6 +6,7 @@ import {validateLogMonitor} from './log-detection.mjs';
 import { operationalLimits } from './operations.mjs';
 import { validateRetryScope } from './provider-retry.mjs';
 import { claudeOptions } from './claude-config.mjs';
+import {logInvestigationOptions} from './dynatrace-log-investigation.mjs';
 import { validateServiceNowMcp } from './servicenow-mcp.mjs';
 import { isSimulationMode } from './runtime-mode.mjs';
 import { validateCollaboration } from './collaboration.mjs';
@@ -35,6 +36,7 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
   if(!Array.isArray(config.services)||!config.services.length)throw new Error('At least one service is required');
   const keys=new Set();
   operationalLimits(config);
+  if(config.agentDevelopment!==undefined&&typeof config.agentDevelopment!=='boolean')throw Error('agentDevelopment must be a boolean');
   if(config.pollConcurrency!==undefined&&(!Number.isInteger(config.pollConcurrency)||config.pollConcurrency<1||config.pollConcurrency>8))throw new Error('pollConcurrency must be between 1 and 8');
   if(config.activeReconcileIntervalMs!==undefined&&(!Number.isFinite(config.activeReconcileIntervalMs)||config.activeReconcileIntervalMs<10000||config.activeReconcileIntervalMs>86400000))throw new Error('activeReconcileIntervalMs must be between 10 seconds and one day');
   for(const service of config.services) {
@@ -46,6 +48,7 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
       validateRetryScope(service[source]?.oauth?.retryScope,source+'.oauth.retryScope');
     }
     for(const source of ['github','gitlab','jira','servicenow','dynatrace','dynatraceLogs','releases','logs','verification','rollback'])if(service[source]?.enabled!==undefined&&typeof service[source].enabled!=='boolean')throw new Error(source+'.enabled must be a boolean');
+    for(const source of ['dynatrace','dynatraceLogs'])if(service[source]?.logInvestigation!==undefined)logInvestigationOptions(service[source]);
     if(service.servicenow?.closedStates!==undefined&&(!Array.isArray(service.servicenow.closedStates)||!service.servicenow.closedStates.length||service.servicenow.closedStates.some(value=>!/^[A-Za-z0-9_-]{1,64}$/.test(String(value)))))throw new Error('ServiceNow closedStates must be a nonempty list of state values');
     if(service.servicenow?.correlateLogMonitors!==undefined&&typeof service.servicenow.correlateLogMonitors!=='boolean')throw new Error('ServiceNow correlateLogMonitors must be a boolean');
     if(service.servicenow)validateServiceNowMcp(service.servicenow);

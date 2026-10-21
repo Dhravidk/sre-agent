@@ -1,0 +1,53 @@
+{
+  "mode": "trial",
+  "agentMode": "claude",
+  "pollIntervalMs": 60000,
+  "services": [
+    {
+      "key": "agent-development",
+      "name": "Supplied investigation context",
+      "tenant": "development",
+      "environment": "development",
+      "teams": {
+        "tenantId": "development",
+        "maxIncidentConversations": 32,
+        "conversations": [
+          "development-room-1",
+          "development-room-2",
+          "development-room-3",
+          "development-room-4"
+        ],
+        "approvers": [],
+        "collaborationGroups": [
+          {
+            "key": "development",
+            "name": "Development groups",
+            "conversations": [
+              {
+                "id": "development-room-1",
+                "name": "Application"
+              },
+              {
+                "id": "development-room-2",
+                "name": "Platform"
+              },
+              {
+                "id": "development-room-3",
+                "name": "Identity"
+              },
+              {
+                "id": "development-room-4",
+                "name": "Incident lead"
+              }
+            ]
+          }
+        ]
+      },
+      "rollback": {
+        "enabled": false,
+        "provider": "gitlab"
+      }
+    }
+  ],
+  "agentDevelopment": true
+}
