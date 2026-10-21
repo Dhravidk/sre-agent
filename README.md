@@ -16,6 +16,8 @@ pnpm sre:dev
 
 Open **http://127.0.0.1:3001**. This defaults to offline rules and synthetic evidence. Ally credentials, internal mappings, verified enterprise MCP schemas, deployment workflows, and production acceptance are not included. Private/generated `.local/` trial evidence and credentials are excluded. Dated checkpoint counts below describe historical runs; rerun the suite for this checkout.
 
+The [handoff verification record](docs/HANDOFF-VALIDATION.md) reports the clean-clone install, 1,203 passing tests, and offline service checks for this publication.
+
 ## Smart Auction lab
 
 A local development repository for testing an SRE agent against a synthetic vehicle auction. It includes a working auction website, an executable auction API, deliberately faulty Git releases, an incident engine, connector contract tests, and a Teams SDK bridge.

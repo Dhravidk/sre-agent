@@ -102,6 +102,8 @@ Use [database transfer](DATABASE-TRANSFER.md) for a supported offline SQLite/Pos
 
 ## Evidence and access limits
 
+See [handoff verification](HANDOFF-VALIDATION.md) for the clean-clone install, current full-suite result and offline checks performed for this publication.
+
 Dated documents preserve development and sandbox checkpoint reports. `.local/` evidence, private trial configuration, databases, generated Git repositories, local QA artifacts, caches, and credentials are intentionally excluded from this checkout. Re-run the committed commands to create evidence in the receiving environment. A reference to a private screenshot/report in an older document is not a bundled artifact or current acceptance result.
 
 No Ally credentials, production data, verified Ally MCP schemas, deployment rights, or system access are transferred with this code. The repository owner must grant developers access to this private repository before they can clone it.
