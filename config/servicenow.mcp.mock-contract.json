@@ -1,0 +1,36 @@
+{
+  "contractStatus": "Mock contract only. Ally tool arguments and result paths must be verified before live use.",
+  "enabled": false,
+  "transport": "mcp",
+  "base": "https://servicenow-mock.invalid",
+  "tokenEnv": "SERVICENOW_MCP_TOKEN",
+  "cmdbCi": "11111111111111111111111111111111",
+  "closedStates": ["6", "7", "8"],
+  "correlateDynatrace": true,
+  "mcp": {
+    "endpoint": "https://servicenow-mcp-mock.invalid/mcp",
+    "timeoutMs": 15000,
+    "bindings": {
+      "incidents": {
+        "tool": "list_incidents",
+        "arguments": {"cmdb_ci": {"$param": "ci"}, "updated_from": {"$param": "since"}, "updated_to": {"$param": "until"}, "active": null, "cursor": {"$param": "cursor"}, "limit": {"$param": "limit"}},
+        "itemsPath": "records", "nextCursorPath": "nextCursor", "completePath": "complete"
+      },
+      "openIncidents": {
+        "tool": "list_incidents",
+        "arguments": {"cmdb_ci": {"$param": "ci"}, "updated_to": {"$param": "until"}, "active": true, "cursor": {"$param": "cursor"}, "limit": {"$param": "limit"}},
+        "itemsPath": "records", "nextCursorPath": "nextCursor", "completePath": "complete"
+      },
+      "incident": {
+        "tool": "get_incident_details", "arguments": {"sys_id": {"$param": "id"}}, "recordPath": "record"
+      }
+    },
+    "enrichment": [
+      {"tool": "get_ci_context", "arguments": {"cmdb_ci": {"$param": "ci"}}},
+      {"tool": "get_ci_relationships", "arguments": {"cmdb_ci": {"$param": "ci"}}},
+      {"tool": "list_change_requests", "arguments": {"cmdb_ci": {"$param": "ci"}, "limit": 10}},
+      {"tool": "list_problems", "arguments": {"cmdb_ci": {"$param": "ci"}, "limit": 10}},
+      {"tool": "list_articles", "arguments": {"query": "fictional auction bid recovery", "limit": 3}}
+    ]
+  }
+}

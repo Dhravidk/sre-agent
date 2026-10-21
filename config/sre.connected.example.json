@@ -1,0 +1,119 @@
+{
+  "mode": "connected",
+  "agentMode": "claude",
+  "claude": {"command":"claude","timeoutMs":120000,"bare":false},
+  "pollIntervalMs": 60000,
+  "pollConcurrency": 4,
+  "activeReconcileIntervalMs": 300000,
+  "operations": {
+    "notify": true,
+    "startupGraceSeconds": 180,
+    "maxPollAgeSeconds": 180,
+    "maxQueueAgeSeconds": 300,
+    "maxTickDurationSeconds": 180,
+    "maxPollDurationSeconds": 180,
+    "maxRollbackWaitSeconds": 1800
+  },
+  "services": [
+    {
+      "key": "auction-staging",
+      "name": "auction-api",
+      "tenant": "replace-with-logical-tenant",
+      "environment": "staging",
+      "github": {
+        "enabled": false,
+        "base": "https://api.github.com",
+        "repository": "OWNER/REPOSITORY",
+        "tokenEnv": "GITHUB_READ_TOKEN",
+        "webhookSecretEnv": "GITHUB_WEBHOOK_SECRET",
+        "retryScope": "REPLACE-WITH-GITHUB-ACCOUNT-LABEL"
+      },
+      "gitlab": {
+        "enabled": false,
+        "base": "https://gitlab.example.com",
+        "project": "123",
+        "tokenEnv": "GITLAB_READ_TOKEN",
+        "webhookSecretEnv": "GITLAB_WEBHOOK_SECRET",
+        "retryScope": "REPLACE-WITH-GITLAB-ACCOUNT-LABEL"
+      },
+      "dynatrace": {
+        "enabled": false,
+        "mode": "classic",
+        "base": "https://ENVIRONMENT.live.dynatrace.com",
+        "entityId": "SERVICE-REPLACE",
+        "tokenEnv": "DYNATRACE_API_TOKEN",
+        "webhookSecretEnv": "DYNATRACE_WEBHOOK_SECRET",
+        "retryScope": "REPLACE-WITH-DYNATRACE-ACCOUNT-LABEL"
+      },
+      "dynatraceLogs": {
+        "enabled": false,
+        "mode": "grail",
+        "base": "https://ENVIRONMENT.apps.dynatrace.com",
+        "logField": "service.name",
+        "logValue": "auction-api",
+        "tokenEnv": "DYNATRACE_OAUTH_TOKEN",
+        "retryScope": "REPLACE-WITH-DYNATRACELOGS-ACCOUNT-LABEL"
+      },
+      "jira": {
+        "enabled": false,
+        "base": "https://SITE.atlassian.net",
+        "auth": "basic",
+        "apiVersion": 3,
+        "projects": [
+          "SA"
+        ],
+        "emailEnv": "JIRA_EMAIL",
+        "tokenEnv": "JIRA_API_TOKEN",
+        "webhookSecretEnv": "JIRA_WEBHOOK_SECRET",
+        "retryScope": "REPLACE-WITH-JIRA-ACCOUNT-LABEL"
+      },
+      "servicenow": {
+        "enabled": false,
+        "base": "https://INSTANCE.service-now.com",
+        "cmdbCi": "00000000000000000000000000000000",
+        "closedStates": [
+          "6",
+          "7",
+          "8"
+        ],
+        "correlateDynatrace": true,
+        "tokenEnv": "SERVICENOW_OAUTH_TOKEN",
+        "webhookSecretEnv": "SERVICENOW_WEBHOOK_SECRET",
+        "retryScope": "REPLACE-WITH-SERVICENOW-ACCOUNT-LABEL"
+      },
+      "releases": {
+        "webhookSecretEnv": "RELEASE_WEBHOOK_SECRET"
+      },
+      "logs": {
+        "webhookSecretEnv": "LOG_WEBHOOK_SECRET"
+      },
+      "verification": {
+        "webhookSecretEnv": "HEALTH_WEBHOOK_SECRET",
+        "maxAgeSeconds": 180
+      },
+      "monitors": [],
+      "teams": {
+        "tenantId": "REPLACE-WITH-ENTRA-TENANT-ID",
+        "conversations": [
+          "REPLACE-WITH-CONVERSATION-ID"
+        ],
+        "operationsConversationId": "REPLACE-WITH-CONVERSATION-ID",
+        "approvers": [
+          "REPLACE-WITH-APPROVER-AAD-OBJECT-ID"
+        ],
+        "captureResponderUpdates": false
+      },
+      "rollback": {
+        "enabled": false,
+        "provider": "github",
+        "workflow": "sre-rollback.yml",
+        "ref": "main",
+        "tokenEnv": "GITHUB_ROLLBACK_TOKEN",
+        "maxAgeHours": 24,
+        "maxTargetAgeHours": 24,
+        "approvalMinutes": 10,
+        "retryScope": "REPLACE-WITH-ROLLBACK-ACCOUNT-LABEL"
+      }
+    }
+  ]
+}

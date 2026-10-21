@@ -1,0 +1,18 @@
+{
+  "mode": "local",
+  "agentMode": "rules",
+  "pollIntervalMs": 30000,
+  "services": [{
+    "key": "auction-local",
+    "name": "auction-api",
+    "tenant": "synthetic",
+    "environment": "local",
+    "github": { "enabled": false, "repository": "synthetic/smart-auction" },
+    "gitlab": { "enabled": false, "project": "17" },
+    "dynatrace": { "enabled": false, "entityId": "SERVICE-AUCTION" },
+    "servicenow": { "enabled": false, "cmdbCi": "11111111111111111111111111111111", "correlateDynatrace": true },
+    "jira": { "enabled": false, "projects": ["SA"] },
+    "teams": { "tenantId": "synthetic", "conversations": ["test-conversation"], "approvers": ["local-operator"], "captureResponderUpdates": true },
+    "rollback": { "enabled": true, "provider": "github", "maxAgeHours": 24, "maxTargetAgeHours": 24, "approvalMinutes": 10 }
+  }]
+}

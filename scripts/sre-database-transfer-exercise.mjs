@@ -1,0 +1,73 @@
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {join,resolve} from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import assert from 'node:assert/strict';
+import {startPostgresCluster} from '../fixtures/postgres-cluster.mjs';
+import {createPilotQaAdapter} from '../fixtures/qa-sandbox.mjs';
+import {fictionalDirectory} from '../fixtures/ownership-directory.mjs';
+import {loadConfig} from '../src/sre/config.mjs';
+import {createSreRuntime} from '../src/sre/server.mjs';
+import {postgresDatabase} from '../src/sre/database.mjs';
+import {seedDemo,devActivity} from '../src/sre/demo.mjs';
+import {conversationKey} from '../src/sre/store.mjs';
+import {normalize} from '../src/sre/normalize.mjs';
+
+const exec=promisify(execFile),args=process.argv.slice(2);
+if(args.length!==2||args[0]!=='--bin'||!args[1])throw Error('Pass --bin <owned PostgreSQL installation bin>; existing database URLs are never accepted');
+const directory=resolve('.local/database-transfer-runs',new Date().toISOString().replace(/[:.]/g,'-')+'-'+randomUUID().slice(0,8));await mkdir(directory,{recursive:true,mode:0o700});
+const profile=JSON.parse(await readFile('config/sre.local.json','utf8')),rooms=['transfer-bidding','transfer-platform','transfer-worker-desk'];
+profile.services[0].teams={...profile.services[0].teams,conversations:rooms,captureResponderUpdates:true,collaborationGroups:[{key:'transfer-fixture',name:'Fictional cutover response',conversations:rooms.map(id=>({id,name:id}))}]};
+profile.services[0].logMonitors=[{id:'transfer-logs',codes:['WINNING_BID_REGRESSED'],minCount:2,windowSeconds:60}];
+const profilePath=join(directory,'profile.json');await writeFile(profilePath,JSON.stringify(profile,null,2)+'\n',{mode:0o600});
+const config=path=>loadConfig({SRE_CONFIG:profilePath,SRE_SQLITE_PATH:path,SRE_CLAUDE_BIN:'/nonexistent-transfer-cli'});
+const sourcePath=join(directory,'source.sqlite'),roundtripPath=join(directory,'roundtrip.sqlite'),snapshot1=join(directory,'sqlite-export.json'),snapshot2=join(directory,'postgres-export.json');
+let source,pgRuntime,roundtrip,cluster,unexpectedQa=0;const cliLog=[];
+const cli=async(script,arguments_,database)=>{
+  const env={PATH:process.env.PATH,LANG:'C',SRE_CONFIG:profilePath,...database};
+  const result=await exec(process.execPath,[resolve(script),...arguments_],{env,encoding:'utf8',timeout:30000,maxBuffer:256*1024});const value=JSON.parse(result.stdout);cliLog.push({script,action:arguments_[0],result:value});return value;
+};
+const transfer=(arguments_,database)=>cli('scripts/sre-database-transfer.mjs',arguments_,database);
+const record={at:new Date().toISOString(),claudeEnabled:false,providerCalls:0,liveDeployments:0,stages:[],directory};
+const stage=(name,evidence)=>{record.stages.push({name,...evidence});console.log(name);};
+try{
+  source=await createSreRuntime({config:config(sourcePath),autoStart:false,qaAdapter:createPilotQaAdapter(join(directory,'qa'))});const s=source.config.services[0],id=(await seedDemo(source.store,s)).incidentId;
+  let sequence=0;
+  const message=async(room,user,text)=>{const sample=devActivity(text,s,{id:'transfer-'+ ++sequence,userId:user,displayName:user,conversationType:'groupChat',conversationId:room});await source.router.accept(sample.activity,sample.reference);await source.router.processOnce();};
+  for(const room of rooms)await message(room,'local-operator','join '+id);
+  for(const user of ['Avery','Noor','Sam','Robin'])await message(rooms[2],user,'update Fictional '+user+' is preserving the accepted-bid evidence and matching the same EU request scope.');
+  for(let i=0;i<20&&await source.worker.runOnce();i++);
+  await source.casework.importDirectory(s.key,fictionalDirectory(await source.store.coordinationNow()));const plan=await source.casework.createPlan(id),principal={verified:true,simulation:true,tenant:s.teams.tenantId,conversationId:rooms[0],userId:'local-operator'},key=conversationKey(principal.tenant,principal.conversationId);
+  const completed=await source.casework.proposeFix(id,plan.id,principal,key,'completed');await source.casework.approveFix(completed.id,completed.nonce,principal,key);await source.casework.runOnce();
+  const [finished]=await source.store.db.query('SELECT status,result FROM sre_fix_requests WHERE id=?',[completed.id]);assert.equal(finished.status,'passed');const result=JSON.parse(finished.result);assert.notEqual(result.reproduction.exitCode,0);assert.equal(result.validation.exitCode,0);
+  const pending=await source.casework.proposeFix(id,plan.id,principal,key,'queued-at-cutover');await source.casework.approveFix(pending.id,pending.nonce,principal,key);
+  const now=await source.store.coordinationNow();await source.store.deferProviderRetry('d'.repeat(64),now+180000,429);
+  await source.store.ingest(normalize('gitlab',{object_kind:'merge_request',project:{id:17},object_attributes:{iid:79,state:'opened',last_commit:{id:result.sourceSha},updated_at:new Date(now).toISOString(),title:'Fictional bid fix review'}},s,{deliveryId:'transfer-live-protocol-fixture'}));
+  const association=await source.casework.trackChange(id,'gitlab',79,{kind:'local-operator',id:'owned cutover rehearsal'}),withdrawal=await source.casework.withdrawChange(id,'gitlab',79,{kind:'local-operator',id:'owned cutover rehearsal'},{expectedEvidenceId:association.evidenceId,reason:'Retain this reviewed negative relationship through database cutover'});
+  await source.logDetector.observe(s,'fixture',{records:[1,2].map(i=>({timestamp:now-100+i,level:'ERROR',environment:s.environment,region:'eu',code:'WINNING_BID_REGRESSED',message:'Synthetic replay of locally reproduced winning-bid failure '+i})),complete:true});
+  const context=await source.store.context(id),agentId=context.session.agent_id,expectedPlan=plan.markdown;await source.close();source=null;
+  stage('sqlite-source-stopped',{incidentId:id,agentId,rooms:rooms.length,workerParticipants:4,completedQa:completed.id,approvedQa:pending.id,sourceSha:result.sourceSha,localFixCommit:result.commit,originalCheckExit:result.reproduction.exitCode,fixedCheckExit:result.validation.exitCode});
+  const exported=await transfer(['export','--offline','--file',snapshot1],{SRE_SQLITE_PATH:sourcePath});stage('private-sqlite-snapshot',{rows:exported.rows,tables:exported.tables,sha256:exported.sha256});
+  cluster=await startPostgresCluster({directory:join(directory,'owned-postgres'),bin:args[1]});stage('native-postgres-started',{version:cluster.version,port:cluster.port,pid:cluster.pid,fsync:cluster.settings.fsync,synchronousCommit:cluster.settings.synchronous_commit,loopbackOnly:cluster.settings.listen_addresses==='127.0.0.1'});
+  const imported=await transfer(['import','--offline','--file',snapshot1,'--sha256',exported.sha256,'--restore-id','sqlite-to-postgres','--reason','Reviewed isolated SQLite to PostgreSQL cutover'],{DATABASE_URL:cluster.url});assert.equal(imported.held,true);stage('postgres-import-held',imported);
+  pgRuntime=await createSreRuntime({config:config(':memory:'),db:await postgresDatabase(cluster.url),autoStart:false,qaAdapter:{localOnly:true,execute:async()=>{unexpectedQa++;throw Error('Old QA must not execute after transfer');}}});
+  const copied=await pgRuntime.store.context(id);assert.equal(copied.session.agent_id,agentId);assert.equal(copied.collaboration.rooms.length,3);assert.equal((await pgRuntime.casework.getPlan(plan.id,id)).markdown,expectedPlan);
+  const copiedCorrection=copied.changeAssociations.controls.find(c=>c.number==='79');assert.equal(copiedCorrection.state,'withdrawn');assert.equal(copiedCorrection.evidenceId,withdrawal.evidenceId);assert.equal(copiedCorrection.historicalAfterRestore,true);assert.ok(!(await pgRuntime.casework.timeline(id)).links.some(l=>l.provider==='gitlab'&&l.change_number==='79'));
+  assert.equal((await pgRuntime.store.db.query('SELECT status FROM sre_fix_requests WHERE id=?',[pending.id]))[0].status,'unknown');assert.equal((await pgRuntime.store.db.query('SELECT status FROM sre_fix_requests WHERE id=?',[completed.id]))[0].status,'passed');assert.equal(await pgRuntime.casework.runOnce(),false);assert.equal(unexpectedQa,0);assert.ok(await pgRuntime.store.providerRetry('d'.repeat(64)));assert.equal((await pgRuntime.casework.contacts(id)).contacts.length,0);
+  const [moved]=await pgRuntime.store.db.query('SELECT result FROM sre_fix_requests WHERE id=?',[completed.id]);assert.equal(JSON.parse(moved.result).patch,result.patch);assert.equal(JSON.parse(moved.result).mergeRequestDraft,result.mergeRequestDraft);assert.ok((await pgRuntime.casework.timeline(id)).items.some(e=>e.change_number==='79'));
+  stage('native-tracking-verified',{sameAgent:true,allRooms:true,markdownExact:true,patchAndMrDraftExact:true,completedQaPreserved:true,oldApprovedQaUnknown:true,providerWaitPreserved:true,oldDirectoryNotCurrent:true,withdrawalControlPreserved:true,withdrawalAuditEvidenceId:withdrawal.evidenceId,unexpectedQaExecutions:unexpectedQa});
+  await pgRuntime.close();pgRuntime=null;
+  const releasePath=join(directory,'fixture-reconciliation.json');await writeFile(releasePath,JSON.stringify({restoreId:'sqlite-to-postgres',requestId:'release-isolated-fixture',reason:'Fixture external effects reviewed; this is not provider authenticity or recovery proof',observedAt:Date.now(),evidenceUrls:['https://fixture.invalid/database-cutover']}),{mode:0o600});
+  const released=await cli('scripts/sre-restore.mjs',['release','--attestation',releasePath],{DATABASE_URL:cluster.url});assert.equal(released.active,false);
+  const pgExport=await transfer(['export','--offline','--file',snapshot2],{DATABASE_URL:cluster.url});stage('postgres-export-after-reconciliation',{rows:pgExport.rows,tables:pgExport.tables,sha256:pgExport.sha256});
+  const returned=await transfer(['import','--offline','--file',snapshot2,'--sha256',pgExport.sha256,'--restore-id','postgres-to-sqlite','--reason','Reviewed isolated return cutover'],{SRE_SQLITE_PATH:roundtripPath});assert.equal(returned.held,true);
+  roundtrip=await createSreRuntime({config:config(roundtripPath),autoStart:false});const back=await roundtrip.store.context(id);assert.equal(back.session.agent_id,agentId);assert.equal(back.collaboration.rooms.length,3);assert.equal((await roundtrip.casework.getPlan(plan.id,id)).markdown,expectedPlan);assert.equal((await roundtrip.store.db.query('SELECT result FROM sre_fix_requests WHERE id=?',[completed.id]))[0].result,moved.result);assert.equal((await roundtrip.store.restoreFence()).restoreId,'postgres-to-sqlite');assert.equal(await roundtrip.outbox.runOnce(),false);
+  assert.equal(back.changeAssociations.controls.find(c=>c.number==='79').state,'withdrawn');assert.equal(back.changeAssociations.controls.find(c=>c.number==='79').evidenceId,withdrawal.evidenceId);
+  stage('sqlite-roundtrip-verified',{sameAgent:true,allRooms:true,fullCompletedQaJsonExact:true,ticketExact:true,newRestoreGenerationHeld:true,providerOrModelCalls:0});
+  record.status='passed';record.cli=cliLog;record.postgresProcesses=cluster.processes;record.scope='Actual local PostgreSQL over authenticated loopback TCP and separate administration CLI processes; incident/provider/Teams inputs are fictional, with no AWS or live provider writes.';
+}catch(error){record.status='failed';record.error=error.message;throw error;}
+finally{
+  await Promise.allSettled([source?.close(),pgRuntime?.close(),roundtrip?.close()]);await cluster?.stop();record.finishedAt=new Date().toISOString();record.ownedPostgresStopped=cluster?cluster.processes.filter(p=>p.name==='postgres').every(p=>p.exit!==undefined):true;
+  await writeFile(join(directory,'report.json'),JSON.stringify(record,null,2)+'\n',{mode:0o600});console.log(JSON.stringify({status:record.status,report:join(directory,'report.json'),ownedPostgresStopped:record.ownedPostgresStopped}));
+}

@@ -1,0 +1,45 @@
+# Ally Claude runtime
+
+The connected example selects `agentMode: "claude"`. The service runs each investigation or Teams follow-up through **`claude -p`**. It does not require OpenAI credentials, an OpenAI model endpoint, or the legacy Eve service. The interactive demo (`pnpm sre:trial:demo`, port 3002) currently defaults to offline rules for the requested coordination tests. Select `SRE_TRIAL_DEMO_AGENT_MODE=claude` explicitly for a real `claude -p` trial with fictional connector evidence and simulated Teams/rollback actions. Local fixture mode remains offline `rules`.
+
+The persistent Node service owns polling, ServiceNow/Dynatrace/GitHub adapters, the incident database, Teams conversations, worker leases and approval checks. It gathers a bounded incident snapshot and sends it to Claude on stdin. Incident content is not placed in process arguments. Claude returns JSON matching the investigation/risk schema; the service independently checks evidence and deployment references before publishing an assessment. Model text cannot approve, execute or verify a rollback.
+
+## Setup
+
+Install an Ally-approved Claude Code CLI on the service host and authenticate that service account through the approved Claude/enterprise provider route. The command flags were exercised with Claude Code **2.1.299**. Check the selected enterprise build before deployment; unsupported flags fail rather than selecting another model provider. Model authentication and permissions are separate from the vendor reader credentials.
+
+```sh
+claude --version
+# Copy/configure the connected example and vendor settings first.
+SRE_CONFIG=.local/sre.connected.json SRE_AGENT_MODE=claude pnpm sre:dev
+```
+
+Optional `SRE_CLAUDE_BIN` selects an executable path (no shell command or extra arguments). `SRE_CLAUDE_MODEL` selects a Claude model/deployment alias; omit it to use the approved CLI default. Do not copy an OpenAI model ID into this setting.
+
+The profile's `claude` object supports `command`, `model`, `timeoutMs` (100–120000, default 120000), `bare` (default false) and optional positive `maxBudgetUsd`. The worker also has a two-minute investigation limit. No extra paid fallback or automatic command replay is configured. A recognized account usage-limit response stops that job after one attempt and displays the CLI reset time when available. Restore account availability, then use Retry investigation with a reason; failed jobs and the retry remain in the audit. Other transient investigation failures retain the existing bounded retries.
+
+Default CLI mode retains the CLI's login authentication. Restricted mode excludes user/project settings; supply provider configuration through the forwarded environment, managed enterprise settings, or an approved executable wrapper. Managed policies still apply. The service forwards Claude/Anthropic and AWS/Azure provider environment variables plus selected OS, proxy, certificate and Google credentials settings. It excludes SRE, database, Teams, repository-writer, OpenAI credentials and Node startup injection settings. The running environment object's changed Claude credentials apply to the next turn; editing a file alone does not reload a running process.
+
+For an API/Bedrock/Vertex/Foundry deployment, `claude.bare:true` additionally disables customization discovery. Bare mode **does not use subscription OAuth/keychain credentials**; it needs the corresponding approved provider credentials. Do not enable it merely to reuse an interactive subscription login. [Anthropic's headless guide](https://code.claude.com/docs/en/headless) documents this authentication difference.
+
+The existing Node-only container image does not install Claude Code or carry enterprise login credentials. Use an approved image/host containing the CLI and the required service-account authentication before deploying this profile.
+
+## Context and process handling
+
+Each invocation uses a private temporary working directory, restricted mode, disabled built-in tools/skills/hooks, an empty explicit MCP configuration, denied MCP tools, no permission prompts, and JSON schema output. These investigations use evidence collected by the service's REST adapters or its host-owned read-only ServiceNow MCP adapter. The latter has been tested against mocks; it does not give the Claude subprocess direct MCP execution. No Dynatrace MCP server is configured. [CLI flags and managed-setting behavior](https://code.claude.com/docs/en/cli-reference) remain subject to the installed enterprise version.
+
+The incident/session identity, responder reports and assessment history stay in the application database. Each turn receives its current bounded snapshot. CLI transcript persistence/resume is disabled, so recovery does not depend on a machine-local Claude transcript or an older Eve session. A crash may require a fresh read-only model invocation and additional inference cost. Successful analysis publication still requires the current worker lease and incident revision; the model does not receive recovery authority.
+
+Stdout is limited to 1 MiB, stderr to 64 KiB, and both stdout UTF-8 and the result envelope must validate. Nonzero exit, error envelopes, malformed output, foreign evidence and timeouts fail the job with controlled diagnostics. Raw CLI stdout/stderr are not included in job errors. Cancellation/timeout terminates the owned process group on macOS/Linux, escalating to SIGKILL if needed, before removing the temporary directory. Windows process-tree cleanup has not been validated.
+
+Claude's summary has a schema limit of 600 Unicode characters and an independent host-side check rejecting blank or oversized summaries. The prompt requests three short sentences; sentence count and factual quality are not established by the length check. Detailed reasoning remains in the other structured fields and the expandable assessment. Rules and legacy Eve retain their existing summary contract.
+
+## Validation limits
+
+Tests use separate synthetic CLI processes for invocation controls, credential filtering/rotation, output failures, cancellation/escalation, and service restart with a durable incident conversation. The restart test closes the service and reopens SQLite; supervisor SIGKILL during an active Claude call remains a pending process-ownership drill. An additional retained local drill ran the actual installed Claude CLI against a loopback Anthropic protocol fixture and observed the `StructuredOutput` tool and validated result. That proves CLI/protocol wiring with synthetic data; it does not establish live Claude authentication, Ally network policy, reasoning quality, vendor access, or Teams installation/delivery. `sre:ready` reports CLI availability/authentication as unverified and makes no model call.
+
+On October 20, 2026, separate trials also used the installed CLI's existing personal Claude login against the actual model service. A small structured sample completed in 20.7 seconds. A production-worker fixture invocation timed out at a 90-second budget; a later invocation completed in 52.6 seconds at the standard 120-second budget. After the summary limit, one more worker invocation completed in 48.2 seconds with a 511-character summary. Both successful worker invocations retained the assessment and two fictional responder reports after SQLite reopen. These are individual synthetic-evidence samples, not an accuracy, latency or reliability benchmark; no Ally authentication, connected vendor evidence or live Teams delivery was exercised. Reports, including the timeout, remain under `.local/acceptance/trials-2026-10-20/`. The then-current full test suite passed 514 tests, including 20 Claude transport tests.
+
+The later MCP checkpoint passed 535 tests and one actual Claude worker invocation with fictional ServiceNow evidence collected through the host MCP adapter. That invocation completed in 51 seconds with a 449-character summary; the assessment and two responder reports survived database reopen. Its seven MCP reads, evidence IDs and output are retained in `.local/acceptance/mcp-recovery-2026-10-20/claude-worker-mcp.json`. It does not establish Ally authentication, model accuracy or live provider acceptance.
+
+The later multi-group coordination checkpoint uses no actual Claude inference. Its host-side briefings and explicit reported-state disagreement checks passed with offline rules. Room provenance and coordination context now enter the bounded model snapshot, but interpreting arbitrary free-text contradictions, competing work and recommendations through the real Claude runtime remains a separate acceptance task. See [Teams coordination](TEAMS-COORDINATION.md).

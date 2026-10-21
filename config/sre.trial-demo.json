@@ -1,0 +1,21 @@
+{
+  "mode": "trial",
+  "agentMode": "claude",
+  "pollIntervalMs": 30000,
+  "operations": { "notify": false },
+  "services": [{
+    "key": "auction-local",
+    "name": "Fictional auction trial",
+    "tenant": "synthetic",
+    "environment": "local",
+    "github": { "enabled": false, "repository": "synthetic/smart-auction" },
+    "gitlab": { "enabled": false, "project": "17" },
+    "dynatrace": { "enabled": false, "entityId": "SERVICE-AUCTION" },
+    "servicenow": { "enabled": false, "cmdbCi": "11111111111111111111111111111111", "correlateDynatrace": true },
+    "jira": { "enabled": false, "projects": ["SA"] },
+    "teams": { "tenantId": "synthetic", "conversations": ["test-conversation", "trial-platform", "trial-worker-desk"], "alertConversationId": "test-conversation", "approvers": ["local-operator"], "captureResponderUpdates": true,
+      "collaborationGroups": [{ "key": "auction-response", "name": "Auction incident response", "conversations": [{ "id": "test-conversation", "name": "Bidding responders" }, { "id": "trial-platform", "name": "Platform responders" }, { "id": "trial-worker-desk", "name": "Fictional worker desk" }] }]
+    },
+    "rollback": { "enabled": true, "provider": "gitlab", "maxAgeHours": 24, "maxTargetAgeHours": 24, "approvalMinutes": 10 }
+  }]
+}

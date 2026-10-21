@@ -1,0 +1,59 @@
+{
+  "name": "smart-auction-sre-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node src/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "pilot:seed": "node scripts/seed-pilot.mjs",
+    "sre:sandbox:package": "node scripts/package-sandbox.mjs",
+    "scenario": "node scripts/cli.mjs scenario",
+    "ask": "node scripts/cli.mjs ask",
+    "connectors:check": "node --env-file-if-exists=.env scripts/check-connectors.mjs",
+    "teams:playground": "node --env-file-if-exists=.env apps/teams/server.mjs --playground",
+    "teams:live": "node --env-file-if-exists=.env apps/teams/server.mjs --live",
+    "agent:dev": "eve dev",
+    "agent:build": "eve build",
+    "sre:dev": "node --env-file-if-exists=.env src/sre/server.mjs",
+    "sre:trial:demo": "node scripts/sre-trial-demo.mjs",
+    "sre:rehearsal": "node scripts/sre-rehearsal.mjs",
+    "sre:seed": "node --env-file-if-exists=.env scripts/sre-cli.mjs seed",
+    "sre:ask": "node --env-file-if-exists=.env scripts/sre-cli.mjs ask",
+    "sre:teams": "node --env-file-if-exists=.env scripts/sre-cli.mjs teams",
+    "sre:status": "node --env-file-if-exists=.env scripts/sre-cli.mjs status",
+    "sre:check": "node --env-file-if-exists=.env scripts/sre-check.mjs",
+    "sre:drill": "node scripts/sre-drill.mjs",
+    "sre:process-drill": "node scripts/sre-process-drill.mjs",
+    "sre:process-exercise": "node scripts/sre-process-exercise.mjs",
+    "sre:exercise": "node scripts/sre-exercise.mjs",
+    "sre:soak": "node scripts/sre-soak.mjs",
+    "sre:restart:exercise": "node scripts/sre-restart-exercise.mjs",
+    "sre:postgres-exercise": "node scripts/sre-postgres-exercise.mjs",
+    "sre:backup-exercise": "node scripts/sre-backup-exercise.mjs",
+    "sre:restore": "node --env-file-if-exists=.env scripts/sre-restore.mjs",
+    "sre:database:transfer": "node scripts/sre-database-transfer.mjs",
+    "sre:database:exercise": "node scripts/sre-database-transfer-exercise.mjs",
+    "sre:changes:exercise": "node scripts/sre-change-tracking-exercise.mjs",
+    "sre:changes:poll-exercise": "node scripts/sre-change-polling-exercise.mjs",
+    "sre:ready": "node --env-file-if-exists=.env scripts/sre-readiness.mjs",
+    "sre:health": "node --env-file-if-exists=.env scripts/sre-operations.mjs",
+    "sre:retry": "node --env-file-if-exists=.env scripts/sre-retry.mjs",
+    "sre:teams:package": "node --env-file-if-exists=.env scripts/package-teams.mjs"
+  },
+  "dependencies": {
+    "@microsoft/teams.apps": "2.1.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "acorn": "8.19.0",
+    "ajv": "8.20.0",
+    "eve": "0.81.0",
+    "just-bash": "3.1.0",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.10"
+  }
+}

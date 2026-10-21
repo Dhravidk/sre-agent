@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: sre
+      POSTGRES_USER: sre
+      POSTGRES_PASSWORD: sre-local-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - sre-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sre -d sre"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  sre-postgres:

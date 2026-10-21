@@ -1,0 +1,7 @@
+node_modules
+.local
+.eve
+.output
+.env
+.env.*
+.git
