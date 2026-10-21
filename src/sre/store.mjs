@@ -1,4 +1,6 @@
 import {batchQuestions} from './question-batch.mjs';
+import {queueModelMessages} from './model-notices.mjs';
+import {investigatorLimit,investigatorSlots,investigatorLeaseName,lockInvestigationScheduler,configureInvestigationScheduler,assertInvestigationScheduler} from './investigation-scheduler.mjs';
 import {ModelQuotaError,modelQuota,holdModelQuota,quotaBlocksClaim,resumeModelQuota} from './model-quota.mjs';
 import {materialChangeObservations} from './change-observation-notices.mjs';
 import { randomUUID } from 'node:crypto';
@@ -38,7 +40,7 @@ const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypot
 export const conversationKey = (tenant, id) => hash([tenant, id]).slice(0, 32);
 
 export class SreStore {
-  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>8)throw Error('Invalid question batch limit');this.questionBatchLimit=questionBatchLimit; }
+  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1, investigationConcurrency = 1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>8)throw Error('Invalid question batch limit');this.questionBatchLimit=questionBatchLimit;this.investigationConcurrency=investigatorLimit(investigationConcurrency); }
   async coordinationNow(query=this.db.query) {
     // PostgreSQL coordinates independent hosts. Its transaction-start timestamp
     // would remain stale across a lock wait, so read the live server clock.
@@ -73,6 +75,7 @@ export class SreStore {
       for(const sql of schema)await q(sql);
     });
     else for(const sql of schema)await this.db.query(sql);
+    await configureInvestigationScheduler(this);
     await this.upgradeServiceNowStates();
     // Add a relational room projection for old report history without changing
     // its evidence IDs or rewriting the original messages.
@@ -321,21 +324,30 @@ export class SreStore {
   async claim(owner, leaseMs = 60000) {
     if(!Number.isSafeInteger(leaseMs)||leaseMs<=0)throw new Error('Invalid investigation lease duration');
     return this.db.transaction(async (q) => {
+      await lockInvestigationScheduler(this,q);
+      await assertInvestigationScheduler(this,q);
       const now=await this.coordinationNow(q);
-      const lease = await q(`INSERT INTO sre_locks(name,owner,expires_at) VALUES('single-agent',?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at WHERE sre_locks.expires_at<=? OR sre_locks.owner=? RETURNING owner,expires_at`, [owner,now+leaseMs,now,owner]);
-      if (!lease.length) return null;
+      if(await quotaBlocksClaim(this,q,now))return null;
+      const [owned]=await q("SELECT id FROM sre_jobs WHERE status='running' AND lease_owner=? AND lease_until>? LIMIT 1",[owner,now]);
+      if(owned)return null;
+      let lease,leaseName;
+      for(const name of investigatorSlots.slice(0,this.investigationConcurrency)){
+        const rows=await q(`INSERT INTO sre_locks(name,owner,expires_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at WHERE sre_locks.expires_at<=? OR sre_locks.owner=? RETURNING owner,expires_at`,[name,owner,now+leaseMs,now,owner]);
+        if(rows.length){lease=rows;leaseName=name;break;}
+      }
+      if(!lease)return null;
       const readyAt=await this.coordinationNow(q);
       if(Number(lease[0].expires_at)<=readyAt)throw new Error('Agent lease expired while claiming work');
-      if(await quotaBlocksClaim(this,q,readyAt))return null;
       // Requeued work joins at its new eligibility time. Keeping its original
       // age here would let one changing incident monopolize the sole worker.
       const questionField=this.db.dialect==='postgres'?"(j.payload::jsonb->>'question')":"json_extract(j.payload,'$.question')";
       // Preserve incident fairness before preferring an explicit request over
       // another update-only turn for that incident. The current evidence is
       // collected either way; eligible updates can share the question's turn.
-      const fairSql="SELECT j.* FROM sre_jobs j LEFT JOIN sre_checkpoints f ON f.id='agent-scheduled:'||j.incident_id WHERE (j.status='pending' AND j.next_at<=?) OR (j.status='running' AND j.lease_until<=?) ORDER BY CASE WHEN j.status='running' THEN 0 ELSE 1 END,COALESCE(f.updated_at,0),CASE WHEN COALESCE("+questionField+",'')<>'' THEN 0 ELSE 1 END,CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1"+(this.db.dialect==='postgres'?' FOR UPDATE OF j SKIP LOCKED':'');
-      const [job] = await q(this.questionBatchLimit>1?fairSql:`SELECT * FROM sre_jobs WHERE (status='pending' AND next_at<=?) OR (status='running' AND lease_until<=?) ORDER BY CASE WHEN status='running' THEN lease_until ELSE next_at END,created_at,id LIMIT 1` + (this.db.dialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : ''), [readyAt,readyAt]);
-      if (!job) return null;
+      const eligible="((j.status='pending' AND j.next_at<=?) OR (j.status='running' AND j.lease_until<=?)) AND NOT EXISTS(SELECT 1 FROM sre_jobs active WHERE active.incident_id=j.incident_id AND active.status='running' AND active.lease_until>?)";
+      const fairSql="SELECT j.* FROM sre_jobs j LEFT JOIN sre_checkpoints f ON f.id='agent-scheduled:'||j.incident_id WHERE "+eligible+" ORDER BY CASE WHEN j.status='running' THEN 0 ELSE 1 END,COALESCE(f.updated_at,0),CASE WHEN COALESCE("+questionField+",'')<>'' THEN 0 ELSE 1 END,CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1"+(this.db.dialect==='postgres'?' FOR UPDATE OF j SKIP LOCKED':'');
+      const [job] = await q(this.questionBatchLimit>1?fairSql:`SELECT j.* FROM sre_jobs j WHERE ${eligible} ORDER BY CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1` + (this.db.dialect === 'postgres' ? ' FOR UPDATE OF j SKIP LOCKED' : ''), [readyAt,readyAt,readyAt]);
+      if (!job) {if(this.investigationConcurrency>1)await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[leaseName,owner]);return null;}
       if(this.questionBatchLimit>1)await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-scheduled:'+job.incident_id,json({jobId:job.id}),readyAt]);
       let payload=await batchQuestions(q,job,parse(job.payload),this.questionBatchLimit,{dialect:this.db.dialect,now:readyAt});
       if(!payload.question||this.questionBatchLimit>1) {
@@ -356,18 +368,19 @@ export class SreStore {
       }
       await q("UPDATE sre_jobs SET status='running',payload=?,attempts=attempts+1,lease_owner=?,lease_until=? WHERE id=?", [json(payload),owner,now+leaseMs,job.id]);
       if(Number(lease[0].expires_at)<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the claim');
-      return {...job,attempts:Number(job.attempts)+1,payload,lease_owner:owner,lease_until:now+leaseMs};
+      return {...job,attempts:Number(job.attempts)+1,payload,lease_owner:owner,lease_until:now+leaseMs,lease_name:leaseName};
     });
   }
-  async heartbeat(owner, jobId, leaseMs = 60000) {
+  async heartbeat(owner, jobId, leaseMs = 60000, leaseName = 'single-agent') {
+    investigatorLeaseName({lease_name:leaseName});
     if(!Number.isSafeInteger(leaseMs)||leaseMs<=0)throw new Error('Invalid investigation lease duration');
     return this.db.transaction(async(q) => {
-      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[leaseName]);
       const [job]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[jobId]);
       const now=await this.coordinationNow(q);
       if(!lease||lease.owner!==owner||Number(lease.expires_at)<=now)throw new Error('Agent lease lost');
       if(!job||job.status!=='running'||job.lease_owner!==owner||Number(job.lease_until)<=now)throw new Error('Job lease lost');
-      await q('UPDATE sre_locks SET expires_at=? WHERE name=? AND owner=?',[now+leaseMs,'single-agent',owner]);
+      await q('UPDATE sre_locks SET expires_at=? WHERE name=? AND owner=?',[now+leaseMs,leaseName,owner]);
       await q("UPDATE sre_jobs SET lease_until=? WHERE id=? AND lease_owner=? AND status='running'",[now+leaseMs,jobId,owner]);
       if(now+leaseMs<=await this.coordinationNow(q))throw new Error('Agent lease expired during heartbeat');
     });
@@ -379,7 +392,7 @@ export class SreStore {
     if(!job)return this.db.query('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?',[json(remoteState),incidentId]);
     if(job.incident_id!==incidentId)throw new Error('Investigation checkpoint is outside the job incident');
     return this.db.transaction(async q=>{
-      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[investigatorLeaseName(job)]);
       if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=await this.coordinationNow(q))throw new Error('Agent lease lost');
       const [current]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       if(!current||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.lease_until)<=await this.coordinationNow(q))throw new Error('Job lease lost');
@@ -390,7 +403,7 @@ export class SreStore {
   }
   async finish(job, analysis, remoteState, expectedRevision, notification={}) {
     return this.db.transaction(async(q) => {
-      const [lease] = await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''), ['single-agent']);
+      const [lease] = await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''), [investigatorLeaseName(job)]);
       if (!lease || lease.owner !== job.lease_owner || Number(lease.expires_at) <= await this.coordinationNow(q)) throw new Error('Agent lease lost');
       const [current]=await q('SELECT lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       const deadline=Math.min(Number(lease.expires_at),Number(current?.lease_until));
@@ -404,24 +417,17 @@ export class SreStore {
         if(job.payload.question||requiredReplyKeys(job.payload).length)await q("UPDATE sre_jobs SET status='pending',next_at=? WHERE id=?",[await this.coordinationNow(q),job.id]);
         if(remoteState)await q('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?',[json(remoteState),job.incident_id]);
         if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the superseded result');
+        if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the superseded result');}
         return null;
       }
-      const changed = notificationKey(parse(prior.analysis)) !== notificationKey(analysis);
+      const previous=parse(prior.analysis),changed = notificationKey(previous) !== notificationKey(analysis);
       await q('UPDATE sre_incidents SET analysis=? WHERE id=?', [json(analysis),job.incident_id]);
       await q('INSERT INTO sre_assessments(id,incident_id,revision,evaluated_at,body) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',[job.id,job.incident_id,Number(prior.revision),await this.coordinationNow(q),json(analysis)]);
       if (remoteState) await q('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?', [json(remoteState),job.incident_id]);
       const id=hash(['analysis',job.id]);
       const origin=job.payload.question?job.payload.conversationKey:null,replies=new Set(requiredReplyKeys(job.payload)),notice=notification.text??analysis.text,contactFormat=notification.contactFormat??'full';
       if(['claude','codex'].includes(analysis.mode)&&analysis.teamsMessages!==undefined){
-        if(!Array.isArray(analysis.teamsMessages)||analysis.teamsMessages.length>4)throw Error('Invalid agent message requests');
-        const destinations=new Set();
-        for(const message of analysis.teamsMessages){
-          if(typeof message.text!=='string'||!message.text.trim()||message.text.length>4000||destinations.has(message.roomKey))throw Error('Invalid agent message request');
-          destinations.add(message.roomKey);
-          const room=await this.authorizeIncidentConversation(message.roomKey,job.incident_id,q);
-          if(room.incident_id!==job.incident_id)throw Error('Agent message destination no longer follows the incident');
-          await this.queueMessage(job.incident_id,message.text,room.id,id+':agent:'+room.id,q);
-        }
+        await queueModelMessages(this,q,{job,analysis,previous,changed,id,replies});
       }else if(changed&&!origin)await this.queueMessage(job.incident_id,notice,null,id,q,{broadcast:true,contacts:analysis.contacts,contactFormat});
       else {
         // Questions get a full answer only in their original conversation.
@@ -431,22 +437,26 @@ export class SreStore {
         for(const room of targets)if((changed||room.id===origin||replies.has(room.id))&&room.incident_id===job.incident_id){const full=room.id===origin;await this.queueMessage(job.incident_id,full?analysis.text:notice,room.id,targets.length===1?id:id+':'+room.id,q,{contacts:analysis.contacts,contactFormat:full?'full':contactFormat});}
       }
       if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the investigation result');
+      if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the investigation result');}
       return analysis;
     });
   }
   async fail(job, error, maxAttempts = 3) {
     await this.db.transaction(async q=>{
-      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+      await lockInvestigationScheduler(this,q);
+      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[investigatorLeaseName(job)]);
       const [current]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       const now=await this.coordinationNow(q);
       if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=now||!current||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.lease_until)<=now)return;
       if(error instanceof ModelQuotaError){
         await holdModelQuota(this,q,job,error,now);
         if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording model quota');
+        if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording model quota');}
         return;
       }
       await q("UPDATE sre_jobs SET status=?,error=?,next_at=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND status='running'",[job.attempts>=maxAttempts?'dead':'pending',redact(String(error.message || error)),now+Math.min(60000,1000*2**job.attempts),job.id,job.lease_owner]);
       if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording failure');
+      if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording failure');}
     });
   }
   async release(owner) { await this.db.query('DELETE FROM sre_locks WHERE owner=?', [owner]); }
@@ -583,6 +593,6 @@ export class SreStore {
     }
     await projectDeliveryInspections(this,deliveryRows,deliveryRecords,restoreId);
     const enriched=new Map(deliveryRows.map(row=>[row.id,row]));
-    return {incidents:incidents.map(x=>({...x,analysis:parse(x.analysis)})),jobs,outbox:outbox.map(row=>enriched.get(row.id)),attentionOutbox:attentionOutbox.map(row=>enriched.get(row.id)),rollbacks:rollbacks.map(x=>({...x,proposal:parse(x.proposal)})),sessions,counts,workerConcurrency:1,modelQuota:await this.modelQuota(),deliveryInspectionVersion:1};
+    return {incidents:incidents.map(x=>({...x,analysis:parse(x.analysis)})),jobs,outbox:outbox.map(row=>enriched.get(row.id)),attentionOutbox:attentionOutbox.map(row=>enriched.get(row.id)),rollbacks:rollbacks.map(x=>({...x,proposal:parse(x.proposal)})),sessions,counts,workerConcurrency:this.investigationConcurrency,modelQuota:await this.modelQuota(),deliveryInspectionVersion:1};
   }
 }

@@ -11,6 +11,7 @@ import { validateServiceNowMcp } from './servicenow-mcp.mjs';
 import { isSimulationMode } from './runtime-mode.mjs';
 import { validateCollaboration } from './collaboration.mjs';
 import { validateTeamsAdmission,tenantAdmission } from './teams-access.mjs';
+import {investigatorLimit} from './investigation-scheduler.mjs';
 
 export function loadConfig(env=process.env) {
   const path=env.SRE_CONFIG||'config/sre.local.json';
@@ -85,6 +86,8 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
   }
   for(const service of config.services)if(tenantAdmission(service.teams)&&config.services.some(other=>other!==service&&other.teams.tenantId===service.teams.tenantId))throw Error('Tenant-wide Teams admission must map to exactly one service per tenant');
   const agentMode=env.SRE_AGENT_MODE||config.agentMode||(config.mode==='local'?'rules':'claude');
+  const investigationConcurrency=investigatorLimit(config.investigationConcurrency??1);
+  if(investigationConcurrency>1&&agentMode!=='claude')throw Error('Concurrent investigation requires the host-owned Claude mode');
   if(!['rules','claude','eve'].includes(agentMode))throw new Error('Invalid agent mode');
   if(agentMode==='claude')claudeOptions(config,env);
   if(requireRuntimeCredentials&&config.mode==='connected'&&!env.SRE_API_TOKEN)throw new Error('Connected mode requires SRE_API_TOKEN');
@@ -98,5 +101,5 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
   if(config.mode==='local'&&agentMode!=='rules')throw new Error('Local mode is offline; select trial mode for Claude with mock connectors or connected mode for live access');
   if(config.mode==='trial'&&agentMode!=='claude')throw new Error('Trial mode uses Claude; choose local mode for offline rules');
   if(requireRuntimeCredentials&&agentMode==='eve'&&(!env.EVE_URL||!env.EVE_TOKEN))throw new Error('Eve mode requires EVE_URL and EVE_TOKEN');
-  return {...config,instanceId,agentMode,port:Number(env.SRE_PORT||3001),host:env.SRE_HOST||'127.0.0.1',databaseUrl:env.DATABASE_URL,sqlitePath:env.SRE_SQLITE_PATH||'.local/sre.sqlite',apiToken:env.SRE_API_TOKEN,capabilitySecret:env.SRE_CAPABILITY_SECRET,teamsMode:env.SRE_TEAMS_MODE||'off',env};
+  return {...config,instanceId,agentMode,investigationConcurrency,port:Number(env.SRE_PORT||3001),host:env.SRE_HOST||'127.0.0.1',databaseUrl:env.DATABASE_URL,sqlitePath:env.SRE_SQLITE_PATH||'.local/sre.sqlite',apiToken:env.SRE_API_TOKEN,capabilitySecret:env.SRE_CAPABILITY_SECRET,teamsMode:env.SRE_TEAMS_MODE||'off',env};
 }

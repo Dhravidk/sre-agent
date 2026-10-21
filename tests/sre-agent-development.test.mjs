@@ -54,6 +54,13 @@ test('streaming accepts fragmented UTF-8, exposes user text, and excludes thinki
   assert.throws(()=>stream.push(Buffer.from('{"type":"result"}\n')),/after its result/);
 });
 
+test('completed-block streaming preserves progress and excludes private/tool/subagent content without repeating deltas',()=>{
+  const progress=[],stream=claudeStream(p=>progress.push(p.text));
+  const assistant=content=>({type:'assistant',parent_tool_use_id:null,message:{content}});
+  for(const event of [assistant([{type:'thinking',thinking:'PRIVATE_THINKING'},{type:'tool_use',input:{secret:'PRIVATE_INPUT'}}]),assistant([{type:'text',text:'Reading bounded telemetry.'}]),{type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'Checking immutable source.'}}},assistant([{type:'text',text:'Checking immutable source.'}]),{...assistant([{type:'text',text:'PRIVATE_SUBAGENT'}]),parent_tool_use_id:'foreign'}, {type:'result',subtype:'success',is_error:false,structured_output:{}}])stream.push(Buffer.from(JSON.stringify(event)+'\n'));
+  stream.finish();assert.deepEqual(progress,['Reading bounded telemetry.','Checking immutable source.']);
+});
+
 test('general source collection reads bounded immutable application files without executing them',async()=>{
   const reads=[],head='a'.repeat(40),base='b'.repeat(40),files=Array.from({length:10},(_,n)=>({new_path:'services/component-'+n+'.js',diff:'@@ -10,1 +10,1 @@\n-old\n+new'}));
   const client={file:async(path,sha)=>{reads.push([path,sha]);return {path,sha,complete:true,content:'// ordinary source\n'.repeat(500)};}};

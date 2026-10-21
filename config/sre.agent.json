@@ -1,6 +1,7 @@
 {
   "mode": "trial",
   "agentMode": "claude",
+  "investigationConcurrency": 4,
   "pollIntervalMs": 60000,
   "services": [
     {

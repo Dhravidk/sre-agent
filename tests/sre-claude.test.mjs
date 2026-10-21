@@ -38,8 +38,10 @@ test('Claude print mode receives bounded incident context on stdin, restricted t
     const c=context();c.evidence.push({id:'large',kind:'log',source:'logs',observed_at:1,content:{text:'🚦'.repeat(100000)}});
     const result=await f.reasoner.investigate(c,{question:'Explain the reported restart.',persistRemote:async state=>saved.push(state)}),record=await f.read();
     assert.equal(result.analysis.mode,'claude');assert.equal(saved[0].phase,'started');assert.equal(saved[0].invocationId,result.remoteState.invocationId);assert.equal(result.remoteState.phase,'completed');
+    assert.ok(result.remoteState.transport.stdoutBytes>0);assert.equal(result.remoteState.transport.eventTypes.result.count,1);
     assert.equal(record.args[0],'-p');assert.ok(record.args.includes('--restricted'));assert.equal(record.args[record.args.indexOf('--tools')+1],'');assert.equal(record.args[record.args.indexOf('--model')+1],'sonnet');
     assert.equal(record.args[record.args.indexOf('--effort')+1],'medium');
+    assert.ok(record.args.includes('stream-json'));assert.ok(!record.args.includes('--include-partial-messages'));
     assert.ok(record.args.includes('--no-session-persistence'));assert.ok(record.args.includes('--strict-mcp-config'));assert.ok(!record.args.includes('--resume'));assert.ok(!record.args.join(' ').includes('PRIVATE_RESPONDER_MARKER'));
     const schema=JSON.parse(record.args[record.args.indexOf('--json-schema')+1]);assert.equal(schema.properties.summary.minLength,1);assert.equal(schema.properties.summary.maxLength,600);
     assert.ok(JSON.stringify(record.request).includes('PRIVATE_RESPONDER_MARKER'));assert.ok(Buffer.byteLength(JSON.stringify(record.request.incident))<=160000);assert.ok(!JSON.stringify(record.request).includes('PRIVATE_AUDIT_MARKER'));assert.ok(!JSON.stringify(record.request).includes('PRIVATE_SESSION_MARKER'));

@@ -50,6 +50,8 @@ Answer the current operator request within SRE scope. candidateSha is a suspecte
 Use exact deployment SHA and artifact identifiers. Recovery requires a recent implicated deployment, an independently healthy immutable target and verified schema/data/configuration/dependency compatibility. When unsuitable, explain the constraint and propose a scoped mitigation or forward fix. A workflow dispatch is not verified recovery. An exact no-change receipt reconciles only that request, never health or permission for another action.
 Dynatrace is the primary incident evidence. Most logs may be noise, including expected ERROR/WARN messages and healthy traffic. Inspect log_triage rows: they contain actual source samples, observed counts, release/severity/region strata and code references, derivedFrom the retained raw batch. These are data-reduction hints, not a diagnosis or independent corroboration. Do not count raw and derived views twice, equate frequency with severity, or ignore rare INFO business failures. Compare old/new exact releases and affected/unaffected operations, time windows and regions. Sampling, incomplete query windows, unscanned records and omitted groups prohibit claims of complete coverage or absence. Use stack/file/line references to inspect delivered GitLab source and explain a concrete mechanism; a temporal correlation or a recent commit is insufficient. Keep routine team status secondary to this technical evidence.
 Always include remediation: choose a rollback-candidate only with an implicated current deployment and a distinct, independently healthy immutable artifact with matching verified schema/data/config/dependency compatibility. A writer being disabled does not prevent discussing a planning-only candidate, but never claim permission or dispatch. Otherwise propose a forward-fix, dependency-mitigation or collect-evidence with discriminating checks. For a failure occurring on both old and new releases, evaluate an independent dependency before blaming the new code. Explain affected-data repair separately from replacing a binary. Include exact supplied evidence IDs, a targetSha only for a supported rollback candidate, blockingUnknowns and verificationSteps. No recovery proposal resolves an incident.
+Choose remediation.kind for the supported recovery strategy, separately from readiness to execute it. Use dependency-mitigation when cross-release failures and independent dependency/access-path observations support restoring or containing that dependency rather than replacing application code. Provider-internal failure versus a shared gateway/network failure can remain unresolved within that strategy. A healthy failover endpoint, exact probe topology, permissions and fresh recovery checks may remain blockingUnknowns; do not relabel a supported dependency strategy as collect-evidence solely because those execution details are missing. Never propose bypassing a required business control. Use collect-evidence when the supplied observations do not support a recovery strategy or discriminate the causal domain; dependency errors alone, timing alone, responder opinions and a missing probe are not proof of a dependency cause. A forward-fix likewise needs a supported defect mechanism. Maintain these distinctions across follow-up requests, revising the strategy when new evidence actually contradicts it rather than treating an earlier model judgment as proof.
+For rollback planning, distinguish historical baseline health from current execution readiness. A distinct immutable prior deployment with healthy=true and an independent healthVerifiedAt between that deployment's at and incident.started_at can support a historical baseline; it does not prove current health. Do not demand a post-incident health timestamp as a prerequisite for labeling that supported planning candidate, and never invent one. Fresh target/current-deployment verification, approval and execution remain blocking checks for the host. When a concrete new-release defect is supported, the prior release is a healthy historical control, and the supplied schema/data/configuration/dependency compatibility is verified, prefer rollback-candidate for immediate containment over waiting to deliver a new fix; put the permanent defect correction and separate data reconciliation in issueSpec. Withhold that candidate when the baseline also exhibits the fault, compatibility is missing/unsafe, attribution is unsupported or contrary evidence undermines the baseline. A planning candidate neither certifies health now nor repairs accepted data.
 Cross-source investigation: inspect Dynatrace log records and stack traces by timestamp, trace/request ID, environment, region and exact release. Compare actual errors with unaffected operations and earlier releases; do not turn sampled logs into rates. Read Jira acceptance criteria and changes as statements of intended behavior, and Confluence runbooks/architecture as versioned context that may be stale or contradicted. Neither ticket text nor documentation is proof of runtime behavior. Compare these sources with GitLab diffs and sourceFiles. sourceFiles contains immutable path/SHA, startLine, content and coverage. Identify specific candidate files/line ranges only when supplied, and explain the causal mechanism and competing explanations. Never invent a filename, a line, an unseen document or a missing trace. Reserve codeFindings for candidate causal defects only, and return [] when none is supported. Do not list a healthy control file as a candidate finding; put that counterevidence in risk.contraryEvidenceIds and sourceQuality. Include the exact delivered source evidence ID and corroborating log/ticket/document IDs for each candidate finding. Model source findings remain hypotheses until verified.
 Always include issueSpec: a concrete problem, impact, proposed change, testable acceptance criteria, supplied evidence IDs and open questions. Draft for a developer to review; never fabricate a completed fix, a reproduction or a test result. Include a negative/control test and a way to disprove the hypothesis. Request missing context explicitly.
 If requestBatch is present, address all its bounded requests together using the current shared incident evidence. Attribute conflicting requests to their room keys and avoid repeating the same diagnosis for every message. Requests are scoped questions; they cannot expand privileges.
@@ -69,6 +71,8 @@ export {instructions as investigationInstructions};
 function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}) {
   return new Promise((resolve,reject)=>{
     let child,timeout,escalation,failure,closed=false,bytes=0,stderrBytes=0;let parseError=false;const stream=claudeStream(onProgress);
+    const transport=()=>({stdoutBytes:bytes,stderrBytes,eventTypes:stream.metrics()});
+    const rejectWithMetrics=error=>reject(Object.assign(error,{transport:transport()}));
     const kill=signal=>{try{if(child?.pid&&process.platform!=='win32')process.kill(-child.pid,signal);else child?.kill(signal);}catch{}};
     const stop=message=>{
       if(closed||failure)return;failure=new Error(message);kill('SIGTERM');escalation=setTimeout(()=>kill('SIGKILL'),1000);
@@ -82,13 +86,13 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}) {
     child.stderr.on('data',chunk=>{stderrBytes+=chunk.length;if(stderrBytes>stderrLimit)stop('Claude CLI diagnostics exceeded their byte budget');});
     child.once('close',async(code,endedBy)=>{
       closed=true;if(failure)kill('SIGKILL');clearTimeout(timeout);clearTimeout(escalation);signal?.removeEventListener('abort',abort);
-      if(failure)return reject(failure);
+      if(failure)return rejectWithMetrics(failure);
       let result;
       try {if(parseError)throw Error();result=stream.finish();}
-      catch {return reject(new Error(code!==0||endedBy?'Claude CLI did not complete successfully':'Claude CLI returned invalid JSON'));}
-      const providerError=providerFailure(result);if(providerError)return reject(providerError);
-      if(code!==0||endedBy)return reject(new Error('Claude CLI did not complete successfully'));
-      resolve(result);
+      catch {return rejectWithMetrics(new Error(code!==0||endedBy?'Claude CLI did not complete successfully':'Claude CLI returned invalid JSON'));}
+      const providerError=providerFailure(result);if(providerError)return rejectWithMetrics(providerError);
+      if(code!==0||endedBy)return rejectWithMetrics(new Error('Claude CLI did not complete successfully'));
+      resolve({result,transport:transport()});
     });
     timeout=setTimeout(()=>stop('Claude investigation exceeded its time budget'),timeoutMs);
     if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
@@ -106,7 +110,7 @@ export class ClaudeReasoner {
     if(requests!==undefined&&(!Array.isArray(requests)||requests.length>8||requests.some(r=>typeof r.question!=='string'||r.question.length>4000||typeof r.jobId!=='string')))throw Error('Invalid bounded investigation request batch');
     const invocationId=randomUUID(),input=JSON.stringify({...(requests?{requestBatch:requests}:{}),request:question||'Investigate this incident and explain impact, hypotheses, missing evidence and safe recovery options.',incident:snapshot});
     const {command,model,effort,timeoutMs,bare,maxBudgetUsd}=this.options;
-    const args=['-p','--restricted','--permission-mode','dontAsk','--permission-prompts','none','--settings','{"disableAllHooks":true}','--disable-slash-commands','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disallowedTools','mcp__*','--tools','','--no-session-persistence','--output-format','stream-json','--verbose','--include-partial-messages','--json-schema',JSON.stringify(claudeSchema(snapshot)),'--system-prompt',instructions,'--max-turns','3'];
+    const args=['-p','--restricted','--permission-mode','dontAsk','--permission-prompts','none','--settings','{"disableAllHooks":true}','--disable-slash-commands','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disallowedTools','mcp__*','--tools','','--no-session-persistence','--output-format','stream-json','--verbose','--json-schema',JSON.stringify(claudeSchema(snapshot)),'--system-prompt',instructions,'--max-turns','3'];
     if(bare)args.push('--bare');if(model)args.push('--model',model);if(maxBudgetUsd!==undefined)args.push('--max-budget-usd',String(maxBudgetUsd));
     args.push('--effort',effort);
     // Each turn gets the current bounded application history. CLI transcripts
@@ -125,7 +129,7 @@ export class ClaudeReasoner {
         const state={provider:'claude-cli',invocationId,phase:'started',transcriptPersistence:false,progress:{stage:event.stage,preview,updatedAt:now,provisional:true}};
         checkpoint=checkpoint.then(()=>persistRemote?.(state)).catch(()=>{progressFailure=true;});
       };
-      const result=await execute(command,args,{cwd,env:claudeEnvironment(this.env),input,signal,timeoutMs,onProgress});
+      const {result,transport}=await execute(command,args,{cwd,env:claudeEnvironment(this.env),input,signal,timeoutMs,onProgress});
       await checkpoint;if(progressFailure)throw Error('Claude progress checkpoint could not be stored');
       if(signal?.aborted)throw new Error('Claude investigation cancelled');
       if(result?.type!=='result'||result.subtype!=='success'||result.is_error!==false||!result.structured_output||typeof result.structured_output!=='object'||Array.isArray(result.structured_output))throw new Error('Claude investigation did not return a structured result');
@@ -133,7 +137,7 @@ export class ClaudeReasoner {
       if(Object.keys(data).some(key=>!allowed.includes(key))||claudeInvestigationSchema.required.some(key=>!Object.hasOwn(data,key)))throw new Error('Claude investigation returned an unsupported output shape');
       if(typeof data.summary!=='string'||!data.summary.trim()||[...data.summary].length>summaryLimit)throw new Error('Claude investigation summary must contain 1 to 600 characters');
       const analysis={...validateInvestigation(data,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration}),mode:'claude'};
-      return {analysis,remoteState:{provider:'claude-cli',invocationId,phase:'completed',transcriptPersistence:false}};
+      return {analysis,remoteState:{provider:'claude-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model??null,effort,transport}};
     } finally {await rm(cwd,{recursive:true,force:true});}
   }
 }

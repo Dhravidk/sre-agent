@@ -109,7 +109,7 @@ export class IncidentWorker {
     try {
       if((await this.store.restoreFence())?.active&&!this.restoreReadOnly)return false;
       job=await this.store.claim(this.owner,this.leaseMs);if(!job)return false;
-      timer=setInterval(()=>this.store.heartbeat(this.owner,job.id,this.leaseMs).catch(error=>controller.abort(error)),Math.max(1000,this.leaseMs/3));
+      timer=setInterval(()=>this.store.heartbeat(this.owner,job.id,this.leaseMs,job.lease_name).catch(error=>controller.abort(error)),Math.max(1000,this.leaseMs/3));
       const initial=await this.store.context(job.incident_id);
       await this.collect(initial,controller.signal);
       const context=await this.store.context(job.incident_id);

@@ -5,6 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {sustainedGroupSuite} from '../fixtures/sustained-group-incidents.mjs';
 import {runGroupBurstEvaluation} from '../scripts/lib/group-burst-evaluation.mjs';
+import {runConcurrentGroupEvaluation} from '../scripts/lib/concurrent-group-evaluation.mjs';
+import {setTimeout as delay} from 'node:timers/promises';
 import {boundedContext,validateInvestigation} from '../src/sre/reasoner.mjs';
 import {fixtureRisk} from '../src/sre/analytic-risk.mjs';
 import {validateCollaboration} from '../src/sre/collaboration.mjs';
@@ -49,26 +51,30 @@ test('older workload directories cannot silently change their pinned evidence co
   }finally{await rm(directory,{recursive:true,force:true});}
 });
 
-test('sustained evaluator drains real worker jobs across groups and preserves restart/resume (test-double reasoning)',async()=>{
+for(const concurrent of [false,true])test((concurrent?'concurrent':'serial')+' sustained evaluator drains real worker jobs across groups and preserves restart/resume (test-double reasoning)',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'sre-group-burst-')),suite=sustainedGroupSuite({recordsPerService:6000});let calls=0;
   const reasoner={mode:'claude',investigate:async context=>{
     calls++;
+    if(concurrent)await delay(30);
     const c=suite.cases.find(c=>c.id===context.incident.issue_key),view=boundedContext(context),source=view.evidence.find(e=>e.content.sourceFiles?.some(f=>f.path===c.expected.path)),evidenceIds=view.evidence.slice(0,3).map(e=>e.id);
     const data={summary:'Synthetic workload check '+c.id,hypotheses:['Test-double judgment only.'],changeAssessment:c.expected.candidate?'likely':'unknown',candidateSha:c.expected.candidate,evidenceIds,unknowns:['No real model used in this unit test.'],nextSteps:['Review independent evidence.'],risk:fixtureRisk(view),codeFindings:c.expected.path?[{provider:'gitlab',path:c.expected.path,sha:c.expected.head,lineStart:c.expected.line,lineEnd:c.expected.line,evidenceId:source.id,explanation:'Test-double source binding.',corroboratingEvidenceIds:evidenceIds}]:[],teamsMessages:[],issueSpec:{title:'Synthetic queue check',problem:'Authored workload.',impact:'Test only.',proposedChange:'Review evidence.',acceptanceCriteria:['Check the independent fixture.'],evidenceIds,openQuestions:['Live model verification remains separate.']},remediation:{kind:c.expected.remediation,targetSha:c.expected.remediation==='rollback-candidate'?c.expected.base:null,rationale:'Synthetic test proposal.',evidenceIds,verificationSteps:['Verify independently.'],blockingUnknowns:['Test only.']}};
     return {analysis:{...validateInvestigation(data,{...context,evidence:view.evidence}),mode:'claude'}};
   }};
   try{
-    const report=await runGroupBurstEvaluation({directory,recordsPerService:6000,burstOffsets:[0,1,2],hotUpdates:4,reasoner});
+    const evaluate=concurrent?runConcurrentGroupEvaluation:runGroupBurstEvaluation;
+    const report=await evaluate({directory,recordsPerService:6000,burstOffsets:[0,1,2],burstIntervalMs:25,hotUpdates:4,reasoner});
     assert.equal(report.model,'test-double');assert.equal(report.status,'passed',JSON.stringify({checks:report.checks,cases:report.cases.map(c=>({case:c.case,checks:c.checks}))}));
     assert.equal(report.metrics.acceptedMessages,212);assert.equal(report.metrics.duplicateDeliveries,68);assert.equal(report.metrics.questions,32);assert.equal(report.metrics.publishedQuestionJobs,32);
-    assert.ok(report.attempts.some(a=>a.jobStatus==='superseded'||a.jobStatus==='pending'),'new evidence must fence stale model publication');
+    if(!concurrent)assert.ok(report.attempts.some(a=>a.jobStatus==='superseded'||a.jobStatus==='pending'),'new evidence must fence stale model publication');
+    if(concurrent){assert.equal(report.metrics.maxActive,4);assert.ok(report.metrics.questionPublicationP95Ms>=0);}
     assert.equal(report.bursts.length,36);assert.equal(report.groups.filter(g=>g.answered===1).length,32);
     assert.ok(report.events.some(e=>e.type==='restart'));assert.equal(report.metrics.rollbacks,0);
-    const before=calls,resumed=await runGroupBurstEvaluation({directory,reasoner});assert.equal(calls,before);assert.equal(resumed.status,'passed');assert.equal(resumed.attempts.length,report.attempts.length);
-    const inputs=(await readFile(join(directory,'attempts','001-case-01-input.json'),'utf8'));
+    const before=calls,resumed=await evaluate({directory,reasoner});assert.equal(calls,before);assert.equal(resumed.status,'passed');assert.equal(resumed.attempts.length,report.attempts.length);
+    if(concurrent)await assert.rejects(()=>evaluate({directory,reasoner,concurrency:2}),/cannot change concurrency/);
+    const first=report.attempts[0],inputs=(await readFile(join(directory,'attempts',String(first.number).padStart(3,'0')+'-'+first.case+'-input.json'),'utf8'));
     assert.ok(!inputs.includes('"expected"'));assert.ok(!inputs.includes('"remediation":"rollback-candidate"'));
     const parameters=JSON.parse(await readFile(join(directory,'fixture.json'),'utf8'));
     await writeFile(join(directory,'fixture.json'),JSON.stringify({...parameters,executionModel:'actual-claude'}));
-    await assert.rejects(()=>runGroupBurstEvaluation({directory,reasoner}),/cannot change model providers/);
+    await assert.rejects(()=>evaluate({directory,reasoner}),/cannot change model providers/);
   }finally{await rm(directory,{recursive:true,force:true});}
 });

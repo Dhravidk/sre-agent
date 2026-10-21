@@ -26,6 +26,8 @@ The original offline rules console remains available explicitly with `pnpm sre:l
 
 `pnpm sre:groups:eval --live` extends the [real-model evaluation to ten incidents and 32 groups](docs/SUSTAINED-GROUP-EVALUATION.md), with a sustained dominant-group message flood, scoped question batches, fair scheduling, restart and immutable source/recovery checks. Vendor evidence and group intake are local fixtures; model inference is real. Claude is the default; `--provider codex` explicitly uses the version-verified official Codex CLI for local development with an existing ChatGPT login. Providers and test-double results cannot be mixed when resuming.
 
+The current workload uses four SQL-coordinated investigation slots, one active job per incident, and fixed-cadence bursts independent of model speed. Use `--concurrency 1` through `4` for a fresh run; `--legacy` retains the earlier serial/model-paced workload. Requested model/effort and capacity are pinned when resuming. The development runtime also selects four slots; other profiles retain one unless explicitly configured. Proactive duplicate model messages stay quiet while selected replies to new explicit questions remain eligible.
+
 ## System at a glance
 
 ```mermaid

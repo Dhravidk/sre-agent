@@ -37,7 +37,7 @@ const db=config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDat
 try{
   // Refuse an unrelated database before schema initialization can add tables.
   await assertApplicationDatabase(db);
-  const store=await new SreStore(db,{services:config.services}).initialize();
+  const store=await new SreStore(db,{services:config.services,investigationConcurrency:config.investigationConcurrency}).initialize();
   if(action==='export'){
     const result=await exportDatabase(store,{offline:true,actor});
     const fd=openSync(options['--file'],constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL,0o600);

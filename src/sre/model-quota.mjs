@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {assertText,redact} from './security.mjs';
+import {lockInvestigationScheduler} from './investigation-scheduler.mjs';
 
 const key='agent-model-quota';
 const conflict=message=>Object.assign(new Error(message),{status:409});
@@ -28,11 +29,12 @@ async function save(store,q,value,now){
 }
 
 // One database has one configured investigator account. The store holds the
-// single-investigator lock here; the hold covers every incident and room and
+// scheduler transaction lock here; the hold covers every incident and room and
 // survives a process restart or worker takeover.
 export async function holdModelQuota(store,q,job,error,now){
-  const hold={version:1,id:randomUUID(),state:'held',provider:error.provider,resetLabel:error.resetLabel,retryAt:error.retryAt,heldAt:now,jobId:job.id};
-  await save(store,q,hold,now);
+  const prior=await modelQuota(store,q);
+  const hold=prior?.state==='held'?prior:{version:1,id:randomUUID(),state:'held',provider:error.provider,resetLabel:error.resetLabel,retryAt:error.retryAt,heldAt:now,jobId:job.id};
+  if(hold!==prior)await save(store,q,hold,now);
   await q("UPDATE sre_jobs SET status='pending',attempts=CASE WHEN attempts>0 THEN attempts-1 ELSE 0 END,error=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND status='running'",[error.message,job.id,job.lease_owner]);
 }
 
@@ -49,7 +51,7 @@ export async function resumeModelQuota(store,{holdId,reason,actor}){
   assertText(actor.id,'operator identity',512);assertText(reason,'quota resume reason',1000);assertText(holdId,'quota hold ID',100);
   const release={kind:'operator',actor:redact(actor),reason:redact(reason.trim())};
   return store.db.transaction(async q=>{
-    await q('SELECT name FROM sre_locks WHERE name=?'+(store.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+    await lockInvestigationScheduler(store,q);
     const hold=await modelQuota(store,q);
     if(!hold||hold.id!==holdId)throw conflict('Model quota hold changed; inspect the current hold before resuming');
     if(hold.state==='released'){

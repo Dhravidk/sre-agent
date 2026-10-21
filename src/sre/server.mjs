@@ -11,6 +11,7 @@ import { providerRetryGate } from './provider-retry.mjs';
 import { RulesReasoner, EveReasoner, boundedContext } from './reasoner.mjs';
 import { ClaudeReasoner } from './claude-reasoner.mjs';
 import { IncidentWorker } from './worker.mjs';
+import {InvestigationPool} from './investigation-pool.mjs';
 import { Rollbacks, assessRollback } from './rollback.mjs';
 import { TeamsRouter, TeamsOutbox, startSreTeams,incidentConversation } from './teams.mjs';
 import { ConnectorPoller } from './poller.mjs';
@@ -37,14 +38,15 @@ const bearer=(req)=>String(req.headers.authorization||'').replace(/^Bearer /,'')
 
 export async function createSreRuntime({config=loadConfig(),db,connectors,reasoner,sender,qaAdapter,deliveryOptions,autoStart=true}={}) {
   const simulation=isSimulationMode(config.mode);
-  const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services,questionBatchLimit:config.agentMode==='claude'?8:1}).initialize();
+  const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services,questionBatchLimit:config.agentMode==='claude'?8:1,investigationConcurrency:config.investigationConcurrency??1}).initialize();
   const secret=config.capabilitySecret||randomBytes(32).toString('hex');
   connectors ||= new Map(config.services.map(service=>[service.key,simulation?{}:createConnectors(service,{env:config.env,clock:()=>store.coordinationNow(),retryGateFactory:descriptor=>providerRetryGate(store,descriptor)})]));
   reasoner ||= config.agentMode==='claude'?new ClaudeReasoner({config,env:config.env}):config.agentMode==='eve'?new EveReasoner({host:config.env.EVE_URL,token:config.env.EVE_TOKEN,capabilitySecret:secret}):new RulesReasoner();
   const casework=new Casework({store,services:config.services,qaAdapter});
   const inspections=new DeliveryInspections({store,services:config.services});
   const logDetector=new LogDetector({store,services:config.services});
-  const worker=new IncidentWorker({store,services:config.services,connectors,reasoner,casework,restoreReadOnly:config.agentMode==='rules'});
+  const Worker=store.investigationConcurrency>1?InvestigationPool:IncidentWorker;
+  const worker=new Worker({store,services:config.services,connectors,reasoner,casework,restoreReadOnly:config.agentMode==='rules'});
   const rollbacks=new Rollbacks({store,services:config.services,connectors,mode:config.mode});
   const coordination=new IncidentCollaboration({store,services:config.services});
   const router=new TeamsRouter({store,services:config.services,rollbacks,coordination,casework,mode:simulation?'playground':'live'});
@@ -71,6 +73,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
   }
   function tick() {
     if(stopped)return Promise.resolve();
+    if(activeTick)worker.wake?.();
     if(activeTick)return activeTick;
     activeTick=(async()=>{
       operations.begin('tick');let error;

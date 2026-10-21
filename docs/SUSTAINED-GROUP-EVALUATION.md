@@ -6,7 +6,7 @@ Run this explicitly with the approved/authenticated Claude installation:
 pnpm sre:groups:eval --live
 ```
 
-This consumes actual Claude usage through the restricted CLI, `IncidentWorker`, the single-investigator lease and durable SQLite jobs. Inputs use authored Dynatrace, GitLab, Jira/Confluence and deployment contracts. Group events enter the admitted-room/store boundary directly. There is no Teams network/authentication exercise, HTTP capacity measurement, live vendor query, outbound sender or deployment writer in this workload.
+This consumes actual Claude usage through the restricted CLI, `IncidentWorker`, four database-coordinated slots and durable SQLite jobs. Each incident remains exclusive. Inputs use authored Dynatrace, GitLab, Jira/Confluence and deployment contracts. Group events enter the admitted-room/store boundary directly. There is no Teams network/authentication exercise, HTTP capacity measurement, live vendor query, outbound sender or deployment writer in this workload. Use `--concurrency 1` through `--concurrency 4` to select the bounded capacity before creating a fresh evaluation directory.
 
 ## Explicit local Codex alternative
 
@@ -30,16 +30,18 @@ Workload version 2 supplies an explicitly authored independent provider-health p
 
 Version 3 additionally pins the provider and actual-model/test-double classification in `fixture.json`, so a resumed directory cannot silently switch providers or turn synthetic results into claimed model results. Its incident evidence is the version-2 contract.
 
+Version 4 is now the default. It pins capacity as well as provider identity, uses the same incident/decision contract, and sends 36 bursts at a fixed four-second cadence independent of model completion. Slow model calls cannot slow its producer. Actual burst times and local ingestion latency are retained. The initial full set of occupied slots is tested from an independent database connection; a peer must not exceed database-wide capacity. Every model start is checked for incident overlap. An idle slot can refill without waiting for another incident's slow call.
+
 At the default 30,000-record service ceiling, the eight service populations supply 238,886 record entries. Old-release counterevidence, INFO business failures, benign severe stacks, malformed content, duplicated/out-of-order logs, incomplete windows and conflicting archived documents remain present. Expected file/line/remediation labels stay outside model inputs.
 
-The first twelve model invocations each receive three bursts at approximately one, ten and twenty seconds after model start. Each burst adds 64 repeated updates from one hot group and one rotating quieter-group update. One question per group is spread over the bursts. Defaults produce:
+Each burst adds 64 repeated updates from one hot group and one rotating quieter-group update. One question per group is spread over the bursts. Defaults produce:
 
-- 36 bursts over multiple actual model turns, rather than one preloaded intake.
+- 36 bursts during actual model processing, rather than one preloaded intake.
 - 2,304 hot-group updates, 36 quieter-group updates and 32 scoped questions: 2,372 accepted messages.
 - 68 replayed deliveries that must be deduplicated.
-- A competing database connection attempting a claim during every burst; the active investigator lease must exclude it.
+- A competing database connection attempting a claim while all initial slots are occupied; database-wide capacity must exclude it.
 
-The producer is paced by actual model turns, not a fixed network arrival rate. Record ingestion latency and the actual producer duration from `report.json`; these do not establish sustained HTTP/Teams throughput. A question being processed into a published assessment also does not establish that a human received a message.
+The historical version-3 producer (`--legacy`) starts three bursts at approximately one, ten and twenty seconds into each of twelve model calls. It is model-paced. Its response times cannot be treated as a controlled one-versus-four comparison with the newer fixed-cadence producer. Both versions record local ingestion latency and producer duration; neither establishes HTTP/Teams throughput. A question being processed into a published assessment also does not establish that a human received a message.
 
 ## Fairness and persistence checks
 
@@ -53,10 +55,10 @@ During the actual-model workload the scorer verifies:
 
 - A first pass across all ten incidents before a repeated hot-incident turn.
 - A quieter incident publishing an assessment while the burst producer is still active.
-- A diverse first hot-incident question batch and exact request-to-audience scope.
+- Bounded question batches and exact request-to-audience scope; room-ranking regressions separately check diversity under a backlog.
 - All 32 original questions covered by published assessment jobs, not only marked as superseded children.
 - Expected immutable file/line, deployment attribution, remediation and delivered-citation checks for each validated model response; final assessments must also be current.
-- A controlled restart after a question batch has been claimed, preserving incident revisions/analyses, job payloads/statuses and room scheduling checkpoints exactly.
+- A controlled restart after question batching, preserving incident revisions/analyses, job payloads/statuses and room scheduling checkpoints exactly. Version 4 pauses admission and lets active calls finish before reopening SQL; this is separate from the native database-crash and cancellation checks.
 - A drained final queue, no deployment records and no external delivery. Locally queued model message requests remain pending; they are neither sent nor counted as successful delivery.
 
 Incoming reports can legitimately invalidate an in-flight assessment. The revision fence must suppress publication and retain necessary questions for a fresh turn. The workload records this behavior instead of treating a stale draft as current or disabling the fence to improve latency.
@@ -73,13 +75,15 @@ pnpm sre:groups:eval --live --records 10000
 pnpm sre:groups:eval --live --directory .local/YOUR-EXISTING-GROUP-EVALUATION
 ```
 
-An existing version-3 directory reuses its pinned parameters and durable jobs; supply the same `--provider` when resuming. Earlier workload directories are rejected instead of silently changing their evidence contract; preserve them and use a fresh directory. A completed run should reopen without another model call. Tests in `sre-group-burst.test.mjs` use a labelled test double for harness/queue checks; they do not measure model accuracy. An explicit live command is required for actual-model results.
+An existing version-4 directory reuses its pinned parameters and durable jobs; supply the same provider, requested model/effort/timeout and concurrency when resuming. Use `--legacy` to resume a version-3 directory with its original provider. Earlier workload directories are rejected instead of silently changing their evidence contract; preserve them and use a fresh directory. A completed run should reopen without another model call. Tests in `sre-group-burst.test.mjs` use a labelled test double for harness/queue checks; they do not measure model accuracy. An explicit live command is required for actual-model results.
 
 Use a fresh directory after changing investigation or context-projection code when comparing quality. Earlier failed judgments remain part of a resumed report; a later correct answer does not erase them. Source hashes alongside development runs identify the tested runtime.
 
 ## Provider quota holds
 
 A native account usage-cap response now creates a durable hold for the configured investigator account across all incidents in that database. The failed invocation's exact question batch remains pending, without consuming its ordinary failure budget. New messages still enter transactional ingestion and deduplication. Subsequent claims, including after restart, make no model call while the hold is active. A stale worker cannot install a hold after losing its lease. This is backpressure on an exhausted provider, not evidence of incident recovery.
+
+With several slots, already admitted calls may finish after the hold is installed. Further cap responses preserve the same hold ID and restore each affected job's ordinary attempt budget; they do not invalidate an operator's reviewed hold merely by racing each other. Restore preparation retains the hold, capacity policy and last queued model-message fingerprints. Separate SQLite/PGlite and owned PostgreSQL process checks cover these boundaries.
 
 The console shows the pause and a **Resume investigations** form. After checking the account, an authenticated local/API operator supplies a reason and resumes the exact displayed hold. A newer hold requires a new review; retries of an identical resume are idempotent. Teams responder text cannot resume the account queue. The same operator boundary protects `GET /api/agent/quota` and `POST /api/agent/quota/resume` (body: `holdId`, `reason`). Status snapshots expose the current hold.
 
@@ -104,3 +108,23 @@ Every validated turn passed exact source path/SHA/line, deployment candidate, ro
 Local authorization/store ingestion p95 was **0.56 ms**, maximum **6.43 ms**, during a **13.31-minute** burst producer. Question-to-assessment publication p95 and maximum were **24.92 minutes**. Model investigations remain serial; durable intake and fair scheduling do not establish fast replies or capacity under an indefinite flood. The outbox retained 25 pending messages across 17 groups. Question assessment coverage is separate from selected messaging, external delivery and human receipt. No sender or deployment writer was enabled.
 
 The private checkpoint under `.local/group-burst-development/` contains `RESULTS.md`, `acceptance.json`, the source/test manifests and original incomplete runs. The completed run's directory contains the full report, per-case issue/recovery drafts, capacity summary and zero-call resume receipt. These are actual Codex results with authored vendor inputs, not a replacement for the pending real-Claude quality rerun or enterprise integration acceptance.
+
+## Concurrent Claude verification (October 21, 2026)
+
+The follow-up separates recovery strategy from permission/readiness to execute it. Independent dependency/access-path observations can support a mitigation strategy while exact probe topology, a healthy mitigation target and approvals remain blockers. Similarly, a verified healthy historical baseline can support a rollback planning candidate without inventing post-incident/current health. A supported new-release regression with verified compatibility favors rollback for immediate containment; the issue specification separately covers a permanent fix and data reconciliation. Unsafe/missing compatibility, an affected baseline or unsupported attribution still withholds rollback. The host does not overwrite classifications with fixture answers, and the original decision oracle is unchanged.
+
+The exact earlier dependency follow-up passed twice through the actual Codex CLI and once through actual Claude. A later concurrent Claude run exposed a second conservative mismatch: one compatible-regression case chose a forward fix because baseline health predated the incident. That complete run remains marked incomplete, even though its final follow-up corrected the decision. Clarifying planning versus execution timing was then tested against the failed snapshot and unsafe-rollback/dependency controls through actual Codex; those three replays passed. The exact failed initial rollback snapshot also passed through actual Claude Sonnet after the timing clarification. Earlier failed runs and the stdout-budget failure remain separate evidence.
+
+The fresh run used **Claude Code 2.1.299**, requested **`sonnet` with medium effort**, four durable slots and the fixed-cadence workload. These identify the requested CLI route, not a separate server-side model attestation. All **17 actual CLI investigations** passed the strict decision, immutable file/SHA/line, candidate/target, delivered-citation and snapshot checks. All ten final assessments were current. This is two independently scoped copies of five decision classes, not ten novel defects.
+
+Across **238,886 authored record entries**, the run retained **2,372 messages**, deduplicated **68 replays**, and covered **all 32 original questions** in published assessment jobs. All **2,382 jobs** drained to done/superseded; 12 assessments published. Thirty-six bursts spanned **140.03 seconds** from first to last at a nominal four-second cadence, independent of inference. A quieter incident published while the producer was active. First-pass incident fairness, room scope, bounded batches, four-slot peer exclusion and controlled restart passed.
+
+Question-publication **p50 was 4.09 minutes**, **p95 5.83 minutes**, maximum **5.90 minutes**. Local admitted-message/store latency p95 was **0.67 ms**, maximum **5.83 ms**. The earlier serial Codex result of 24.92 minutes used a different model and model-paced arrival schedule; this is not a controlled speedup comparison. Publication still takes minutes, and neither this finite local workload nor prompt acknowledgements establish an arbitrary-arrival-rate SLO or Microsoft transport capacity.
+
+A drained-run reopen made **zero new model calls** and preserved the checked incident revisions/analyses, jobs/payloads/attempt budgets, room service checkpoints and outbox identities/status/text exactly. The outbox retained **22 pending messages**. Assessment coverage is separate from selected messaging, external delivery and human receipt. No sender, ticket publisher or deployment writer was enabled.
+
+The current full suite passed **1,432 tests**, with zero failures or skips. An owned **PostgreSQL 17.11** exercise used eight independent Node processes over loopback TCP/SCRAM: capacity/incident exclusion, quieter-incident admission, a stable account hold across simultaneous cap responses, original job attempts and immediate database restart passed. SQLite/PGlite regressions also cover expiry during final slot release, shutdown, admission-error bounds, capacity changes, restore/import, and quiet proactive messages versus selected explicit replies. These are local results, not enterprise PostgreSQL or vendor acceptance.
+
+The actual Claude retry initially hit the unchanged 1 MiB stdout cap with token-level partial envelopes. Completed text-block streaming preserved user-facing progress and omitted the duplicate partial event stream; the default-model dependency replay then passed. In the fresh workload, every invocation stayed within the cap (maximum **62,337 bytes**, zero stderr bytes). Thinking/tool/init/subagent content is excluded from progress and retained diagnostics. The model still has no connector or execution tools.
+
+Private evidence is retained under `.local/concurrent-investigations/` and the timestamped workload directory: exact inputs/results, original mismatches, full-suite logs, source manifests, native PostgreSQL results, `acceptance.json` and the zero-call resume receipt. The live run began before a final admission-error-buffer bound; its normal path had no admission failures, and that failure branch has a reproduced regression and the final full suite. Diagnosis, snapshots, SQL admission, publication fencing and normal slot refill were unchanged. Live Grail semantics/permissions, GitLab/Teams acceptance and the approved enterprise model/hosting route remain outstanding.

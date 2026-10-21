@@ -97,6 +97,21 @@ test('investigation reads aggregate strata before limits, priority and broad bas
   assert.equal(r.coverage.maxScanGbytes,1);assert.equal(r.coverage.aggregateComplete,true);
 });
 
+test('aggregate projections and full query records retain one enriched witness without inflating triage',async()=>{
+  const complete={...row(),customBusinessContext:'Retain this useful full-record attribute'};
+  const c=client(async query=>result(query.includes('summarize')?[aggregate()]:[complete]));
+  const logs=await readInvestigationLogs(c,{from:0,to:1000});assert.equal(logs.records.length,1);assert.equal(logs.records[0].customBusinessContext,complete.customBusinessContext);
+  assert.equal(logs.aggregates[0].sampleHash,logRecordHash('dynatrace',complete));
+  assert.equal(triageLogBatch(logs).groups.reduce((n,g)=>n+g.observations,0),1);
+});
+
+test('different full records sharing the query projection remain distinct and explicitly ambiguous',async()=>{
+  const first={...row(),customBusinessContext:'first'},second={...row(),customBusinessContext:'second'};
+  const c=client(async query=>result(query.includes('summarize')?[aggregate()]:[first,second]));
+  const logs=await readInvestigationLogs(c,{from:0,to:1000});assert.equal(logs.records.length,2);assert.deepEqual(logs.records.map(r=>r.customBusinessContext),['first','second']);
+  assert.equal(logs.coverage.ambiguousProjections,1);assert.match(logs.interpretation,/not provider-event identity/);
+});
+
 test('truncated priority windows split within eight queries and keep baseline truncation unknown',async()=>{
   const calls=[],c=client(async(query,o)=>{calls.push({query,...o});if(query.includes('summarize'))return result([]);if(query.includes('isNotNull')&&o.to-o.from>1000||!query.includes('isNotNull'))return result(Array.from({length:200},(_,n)=>row(o.from+n%(o.to-o.from))));return result([row(o.from+1)]);});
   const r=await readInvestigationLogs(c,{from:0,to:8000});assert.equal(calls.length,8);assert.equal(r.complete,false);assert.equal(r.coverage.baselineComplete,false);assert.equal(r.coverage.priorityComplete,false);assert.ok(r.coverage.remainingWindows>0);assert.ok(calls.every(c=>c.from>=0&&c.to<=8000));
