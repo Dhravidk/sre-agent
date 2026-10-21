@@ -4,10 +4,11 @@ Read and follow [AGENTS.md](AGENTS.md) before working on this repository. It is 
 
 For an Ally implementation, read these in order:
 
-1. [Ally developer handoff](docs/ALLY-HANDOFF.md)
-2. [Connector and service checklist](docs/ALLY-INTEGRATION-CHECKLIST.md)
-3. [Architecture and code map](docs/ARCHITECTURE.md)
-4. [Implementation brief and suggested prompt](docs/ALLY-AGENT-PROMPT.md)
+1. [Human system walkthrough and Mermaid diagrams](docs/HUMAN-GUIDE.md)
+2. [Ally developer handoff](docs/ALLY-HANDOFF.md)
+3. [Connector and service checklist](docs/ALLY-INTEGRATION-CHECKLIST.md)
+4. [Architecture and code map](docs/ARCHITECTURE.md)
+5. [Implementation brief and suggested prompt](docs/ALLY-AGENT-PROMPT.md)
 
 The project contains a working synthetic lab and a persistent integration runtime. It does not include Ally credentials, an Ally deployment, verified Ally MCP schemas, or a production execution workflow. The connected runtime invokes an approved `claude -p` installation; your role as the coding agent is to adapt and validate the host service and its integrations. These are separate roles.
 

@@ -9,8 +9,9 @@ Implement the production SRE agent on an AWS VM according to
 docs/JIRA-SRE-AGENT.md. Production is the delivery target; local fixtures and
 historical trial results do not establish production acceptance.
 
-Read AGENTS.md and CLAUDE.md, then docs/JIRA-SRE-AGENT.md,
-docs/ALLY-HANDOFF.md, docs/ALLY-INTEGRATION-CHECKLIST.md and docs/ARCHITECTURE.md.
+Read AGENTS.md and CLAUDE.md, then docs/HUMAN-GUIDE.md,
+docs/JIRA-SRE-AGENT.md, docs/ALLY-HANDOFF.md,
+docs/ALLY-INTEGRATION-CHECKLIST.md and docs/ARCHITECTURE.md.
 Inspect the code and tests rather than relying on historical checkpoint claims.
 
 Start by installing from the frozen lockfile and running the offline suite.
@@ -38,8 +39,9 @@ Stream user-facing progress/output from claude -p to its own console. Let the
 agent select an explicit Teams-message action; the host validates scope and sends
 through the durable outbox. Keep connector credentials and delivery execution in
 the host. Do not automatically forward the full console stream into Teams.
-The current completed-JSON wrapper and host-generated replies do not already
-implement this streaming/message-selection contract.
+The development runtime implements bounded progress streaming and validated
+model-selected message requests. Validate these against the approved Claude
+runtime and live Teams delivery; local fixtures do not establish acceptance.
 
 Configure and validate the real readers one at a time, including the missing
 Confluence integration, then actual Teams identity/installation, incident sharing,

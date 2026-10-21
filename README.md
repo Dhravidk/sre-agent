@@ -2,6 +2,8 @@
 
 An SRE investigation and incident-collaboration prototype with a persistent Node.js service, Teams bridge, scoped provider connectors, host-controlled Claude reasoning, and a synthetic Smart Auction lab.
 
+**For humans:** read [How the SRE agent works](docs/HUMAN-GUIDE.md) for the plain-language walkthrough and Mermaid diagrams covering the system, an investigation, team collaboration, and recovery approvals.
+
 **For an Ally developer:** start with the [developer handoff](docs/ALLY-HANDOFF.md), [connector and service checklist](docs/ALLY-INTEGRATION-CHECKLIST.md), and [architecture](docs/ARCHITECTURE.md). They describe what is implemented, what Ally must reconnect or build, and how to validate a read-only pilot.
 
 **For a coding agent:** read [AGENTS.md](AGENTS.md). Claude Code also has [CLAUDE.md](CLAUDE.md). Use the [implementation brief](docs/ALLY-AGENT-PROMPT.md) to adapt the project in an approved Ally environment.
@@ -23,6 +25,22 @@ Current development emphasizes [noisy Dynatrace investigations](docs/DYNATRACE-I
 The original offline rules console remains available explicitly with `pnpm sre:lab` on port 3001. Ally credentials, internal mappings, verified enterprise MCP schemas, deployment workflows, and production acceptance are not included. Private/generated `.local/` evidence is excluded. Dated checkpoint counts describe historical runs rather than the current checkout.
 
 `pnpm sre:groups:eval --live` extends the [real-model evaluation to ten incidents and 32 groups](docs/SUSTAINED-GROUP-EVALUATION.md), with a sustained dominant-group message flood, scoped question batches, fair scheduling, restart and immutable source/recovery checks. Vendor evidence and group intake are local fixtures; model inference is real. Claude is the default; `--provider codex` explicitly uses the version-verified official Codex CLI for local development with an existing ChatGPT login. Providers and test-double results cannot be mixed when resuming.
+
+## System at a glance
+
+```mermaid
+flowchart LR
+  providers["ServiceNow, GitLab/GitHub,<br/>Dynatrace and optional Jira"] -->|"Scoped evidence"| host["SRE host<br/>Collection, policy and coordination"]
+  host <--> database[("Incident database")]
+  host -->|"Bounded snapshot"| claude["Restricted Claude analysis"]
+  claude -->|"Assessment"| host
+  people["Responders in authorized Teams rooms"] <--> host
+  operator["Private operator console"] <--> host
+  host -->|"Optional: explicit approval and fresh checks"| workflow["Owner-supplied protected recovery pipeline"]
+  proof["Trusted release data and independent health proof"] --> host
+```
+
+The host controls access, durable state, and optional actions. Claude returns an assessment. Real connectors, the deployment pipeline, and independent verification need the approved Ally setup described in the [human guide](docs/HUMAN-GUIDE.md) and [integration checklist](docs/ALLY-INTEGRATION-CHECKLIST.md).
 
 ## Smart Auction lab
 
