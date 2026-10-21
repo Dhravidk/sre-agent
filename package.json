@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "node src/server.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "pilot:seed": "node scripts/seed-pilot.mjs",
     "sre:sandbox:package": "node scripts/package-sandbox.mjs",
     "scenario": "node scripts/cli.mjs scenario",

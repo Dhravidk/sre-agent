@@ -37,7 +37,7 @@ The default launcher uses deterministic rules. It makes no model calls or calls 
 
 ```sh
 node src/server.mjs
-node --test tests/*.test.mjs
+node scripts/run-tests.mjs
 ```
 
 Use a Node.js 24+ installation from your development environment; no developer-specific executable path is required.

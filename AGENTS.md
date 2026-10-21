@@ -31,6 +31,8 @@ pnpm sre:rehearsal                # Separate offline multi-team rehearsal, port 
 pnpm sre:ready --json             # Configuration inventory; zero network calls
 ```
 
+`pnpm test` uses `scripts/run-tests.mjs` to finish generating the shared auction fixture before starting parallel test processes. The direct equivalent is `node scripts/run-tests.mjs`. If invoking `node --test` manually in a fresh checkout, first run `node scripts/seed-pilot.mjs` to avoid racing fixture creation.
+
 `pnpm sre:trial:demo` runs a separate synthetic demo on port 3002. `pnpm dev` starts the original auction lab. Do not confuse either with the connected service. Native PostgreSQL exercises require the separately documented server binaries; passing PGlite tests does not validate enterprise PostgreSQL.
 
 ## Integration rules
