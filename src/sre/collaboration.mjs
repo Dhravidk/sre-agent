@@ -54,6 +54,17 @@ export function authorizedRoom(service,conversation) {
   return conversation&&Number(conversation.enabled)===1&&conversation.service_key===service.key&&conversation.tenant_id===service.teams.tenantId&&teamsConversationAllowed(service.teams,conversation.conversation_id);
 }
 
+// Names describe an exact admitted conversation, including its historical
+// disabled record. They do not enable it or grant incident sharing authority.
+export function conversationDisplayName(service,conversation,labelValue){
+  const root=rootConversation(conversation.conversation_id);
+  if(!service||conversation.service_key!==service.key||conversation.tenant_id!==service.teams.tenantId||!teamsConversationAllowed(service.teams,conversation.conversation_id))return root;
+  const scope=roomScope(service,conversation.conversation_id);let name=scope.name;
+  if(name===root){try{const candidate=JSON.parse(conversation.reference).sreRoomName;if(validConversationName(candidate))name=candidate;}catch{}}
+  if(labelValue!==null&&labelValue!==undefined){try{const candidate=JSON.parse(labelValue).name;if(validConversationName(candidate))name=candidate;}catch{}}
+  return name;
+}
+
 export async function collaborationSnapshot(store,service,incidentId,q=store.db.query) {
   if(!service?.teams.collaborationGroups?.length&&!tenantAdmission(service?.teams))return {enabled:false,rooms:[],issues:[]};
   const [incident]=await q('SELECT status FROM sre_incidents WHERE id=?',[incidentId]);
@@ -65,18 +76,20 @@ export async function collaborationSnapshot(store,service,incidentId,q=store.db.
   const allowedKeys=allowed.map(room=>room.id);
   const now=await store.coordinationNow(q),staleMs=(service.teams.coordinationStaleSeconds??300)*1000,ackMs=(service.teams.coordinationAckSeconds??300)*1000;
   const [coordination]=await q('SELECT generation FROM sre_coordination WHERE incident_id=?',[incidentId]);
-  const rooms=[];
+  const rooms=[],statusPositions=new Map();
+  const statePositions="SELECT r.evidence_id,r.conversation_key,r.reported_status,r.ordinal,e.observed_at,e.content,COALESCE(p.author_key,'unknown') AS author_key,ROW_NUMBER() OVER(PARTITION BY r.conversation_key,COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_rank,ROW_NUMBER() OVER(PARTITION BY CASE WHEN p.author_key IS NOT NULL AND p.author_key<>'' AND p.author_key<>'unknown' THEN 'person:'||p.author_key ELSE 'room:'||r.conversation_key END ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_global_rank FROM sre_responder_rooms r JOIN sre_evidence e ON e.id=r.evidence_id LEFT JOIN sre_responder_people p ON p.evidence_id=e.id WHERE r.incident_id=? AND r.conversation_key IN ("+allowedKeys.map(()=>'?').join(',')+") AND r.reported_status IS NOT NULL";
+  const statePosition=row=>({participantKey:participant(row,service.teams.tenantId),at:Number(row.observed_at),receiptOrder:Number(row.ordinal),currentForAuthor:Number(row.author_global_rank)===1});
   for(const conversation of allowed) {
     const scope=roomScope(service,conversation.conversation_id);
-    if(scope.name===scope.root)scope.name=short(JSON.parse(conversation.reference).sreRoomName||scope.name,80);
     if(!authorizedRoom(service,conversation)||(audience&&audience.scope_key!==scope.key))continue;
     const [label]=await q('SELECT value FROM sre_checkpoints WHERE id=?',['teams-room-label:'+conversation.id]);
-    if(label&&validConversationName(JSON.parse(label.value).name))scope.name=JSON.parse(label.value).name;
+    scope.name=conversationDisplayName(service,conversation,label?.value);
     const recent=await q("SELECT * FROM (SELECT r.evidence_id,r.reported_status,r.ordinal,e.observed_at,e.content,ROW_NUMBER() OVER(PARTITION BY COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_rank FROM sre_responder_rooms r JOIN sre_evidence e ON e.id=r.evidence_id LEFT JOIN sre_responder_people p ON p.evidence_id=e.id WHERE r.incident_id=? AND r.conversation_key=? AND r.kind='responder_update') ranked WHERE author_rank=1 ORDER BY observed_at DESC,ordinal DESC,evidence_id DESC LIMIT 6",[incidentId,conversation.id]);
     const [authors]=await q("SELECT COUNT(DISTINCT p.author_key) AS count FROM sre_responder_people p JOIN sre_responder_rooms r ON r.evidence_id=p.evidence_id WHERE p.incident_id=? AND p.conversation_key=? AND r.kind='responder_update'",[incidentId,conversation.id]);
-    const [state]=await q('SELECT r.evidence_id,r.reported_status,e.observed_at,e.content FROM sre_responder_rooms r JOIN sre_evidence e ON e.id=r.evidence_id WHERE r.incident_id=? AND r.conversation_key=? AND r.reported_status IS NOT NULL ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC LIMIT 1',[incidentId,conversation.id]);
-    const stateRows=await q("SELECT * FROM (SELECT latest.*,COUNT(*) OVER() AS state_count FROM (SELECT r.evidence_id,r.reported_status,r.ordinal,e.observed_at,e.content,COALESCE(p.author_key,'unknown') AS author_key,ROW_NUMBER() OVER(PARTITION BY COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_rank FROM sre_responder_rooms r JOIN sre_evidence e ON e.id=r.evidence_id LEFT JOIN sre_responder_people p ON p.evidence_id=e.id WHERE r.incident_id=? AND r.conversation_key=? AND r.reported_status IS NOT NULL) latest WHERE author_rank=1) bounded ORDER BY observed_at DESC,ordinal DESC LIMIT 8",[incidentId,conversation.id]);
-    const stateReports=stateRows.map(row=>{const content=JSON.parse(row.content);return {state:row.reported_status,evidenceId:row.evidence_id,at:Number(row.observed_at),author:short(content.displayName||content.userId||'Responder',60),participantKey:participant(row,service.teams.tenantId),text:short(content.text,260),stale:now-Number(row.observed_at)>staleMs,verified:false};});
+    const [state]=await q('SELECT * FROM ('+statePositions+') latest WHERE conversation_key=? ORDER BY observed_at DESC,ordinal DESC,evidence_id DESC LIMIT 1',[incidentId,...allowedKeys,conversation.id]);
+    const stateRows=await q('SELECT * FROM (SELECT latest.*,COUNT(*) OVER() AS state_count FROM ('+statePositions+') latest WHERE author_rank=1 AND conversation_key=?) bounded ORDER BY CASE WHEN author_global_rank=1 THEN 0 ELSE 1 END,observed_at DESC,ordinal DESC,evidence_id DESC LIMIT 8',[incidentId,...allowedKeys,conversation.id]);
+    const stateReports=stateRows.map(row=>{const content=JSON.parse(row.content);return {state:row.reported_status,evidenceId:row.evidence_id,...statePosition(row),author:short(content.displayName||content.userId||'Responder',60),text:short(content.text,260),stale:now-Number(row.observed_at)>staleMs,verified:false};});
+    if(state)statusPositions.set(conversation.id,statePosition(state));
     const active="author_global_rank=1 AND ((kind='work' AND item_state IN ('planned','active','blocked')) OR (kind='theory' AND item_state<>'ruled-out'))";
     const priority='CASE WHEN '+active+' THEN 0 WHEN author_global_rank=1 THEN 1 ELSE 2 END';
     const ledger=await q("SELECT * FROM (SELECT fair.*,COUNT(*) OVER(PARTITION BY kind) AS kind_count,ROW_NUMBER() OVER(PARTITION BY kind ORDER BY "+priority+",author_rank,observed_at DESC,ordinal DESC) AS kind_rank FROM (SELECT latest.*,ROW_NUMBER() OVER(PARTITION BY kind,author_key ORDER BY "+priority+",observed_at DESC,ordinal DESC) AS author_rank FROM (SELECT c.*,e.observed_at,e.content,r.ordinal,COALESCE(p.author_key,'unknown') AS author_key,ROW_NUMBER() OVER(PARTITION BY c.kind,c.item_key,c.conversation_key,COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS item_rank,ROW_NUMBER() OVER(PARTITION BY c.kind,c.item_key,CASE WHEN p.author_key IS NOT NULL AND p.author_key<>'' AND p.author_key<>'unknown' THEN 'person:'||p.author_key ELSE 'room:'||c.conversation_key END ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_global_rank FROM sre_coordination_items c JOIN sre_evidence e ON e.id=c.evidence_id JOIN sre_responder_rooms r ON r.evidence_id=c.evidence_id LEFT JOIN sre_responder_people p ON p.evidence_id=c.evidence_id WHERE c.incident_id=? AND c.conversation_key IN ("+allowedKeys.map(()=>'?').join(',')+")) latest WHERE item_rank=1 AND conversation_key=?) fair) bounded WHERE kind_rank<=8 ORDER BY observed_at DESC,ordinal DESC",[incidentId,...allowedKeys,conversation.id]);
@@ -97,7 +110,17 @@ export async function collaborationSnapshot(store,service,incidentId,q=store.db.
     if(!prior||item.at>prior.at||item.at===prior.at&&item.receiptOrder>prior.receiptOrder)latestPositions.set(key,item);
   }
   for(const item of visiblePositions)if(item.currentForAuthor&&item.participantKey&&latestPositions.get(JSON.stringify([item.kind,item.key,item.participantKey]))!==item)item.currentForAuthor=false;
-  const states=new Set(rooms.flatMap(room=>room.stateReports.map(report=>report.state))),issues=[];
+  // Service-state corrections follow the same native participant across the
+  // admitted incident audience. Keep the old room's claim as history. SQL
+  // computes this before the per-room cap; reconcile visible reads as well.
+  const stateClaims=[...rooms.flatMap(room=>room.stateReports),...statusPositions.values()],latestStates=new Map();
+  for(const claim of stateClaims.filter(claim=>claim.currentForAuthor&&claim.participantKey)){
+    const prior=latestStates.get(claim.participantKey);
+    if(!prior||claim.at>prior.at||claim.at===prior.at&&claim.receiptOrder>prior.receiptOrder)latestStates.set(claim.participantKey,claim);
+  }
+  for(const claim of stateClaims)if(claim.currentForAuthor&&claim.participantKey){const latest=latestStates.get(claim.participantKey);if(latest&&(claim.at<latest.at||claim.at===latest.at&&claim.receiptOrder<latest.receiptOrder))claim.currentForAuthor=false;}
+  for(const room of rooms)room.statusCurrentForAuthor=statusPositions.get(room.key)?.currentForAuthor??null;
+  const states=new Set(rooms.flatMap(room=>room.stateReports.filter(report=>report.currentForAuthor).map(report=>report.state))),issues=[];
   if(states.has('recovered')&&[...states].some(state=>['investigating','mitigating','blocked'].includes(state)))issues.push({code:'reported-state-disagreement',text:'Participants report different service states: one reports recovery while another is still investigating, mitigating or blocked. Confirm whether they mean the same service, time window and user impact.'});
   if(states.has('recovered')&&incident?.status!=='resolved')issues.push({code:'recovery-unverified',text:'Reported recovery is not independently verified. The incident remains '+incident.status+'.'});
   const theories=rooms.flatMap(room=>room.theories.filter(item=>item.currentForAuthor).map(item=>({...item,roomKey:room.key,roomName:room.name}))),work=rooms.flatMap(room=>room.work.filter(item=>item.currentForAuthor).map(item=>({...item,roomKey:room.key,roomName:room.name})));
@@ -123,7 +146,7 @@ export async function collaborationSnapshot(store,service,incidentId,q=store.db.
   issues.unshift(...handoffIssues);
   if(handoffCoverage.omitted)issues.push({code:'handoff-window',text:handoffCoverage.omitted+' additional handoff records are outside this bounded view. Unresolved handoffs are prioritized; review retained work evidence before assuming ownership or completion.'});
   for(const room of rooms) {
-    if(room.statusStale)issues.push({code:'stale-team-state',roomKey:room.key,text:room.name+' has an old reported service state. Ask for a fresh impact report; newer chatter does not refresh that state.'});
+    if(room.statusStale&&room.statusCurrentForAuthor!==false)issues.push({code:'stale-team-state',roomKey:room.key,text:room.name+' has an old reported service state. Ask for a fresh impact report; newer chatter does not refresh that state.'});
     if(room.work.some(item=>activeWork(item)&&item.stale))issues.push({code:'stale-work',roomKey:room.key,text:room.name+' has work without a fresh owner update. Confirm ownership, result and next check before assuming it is progressing.'});
     if(room.omittedItems)issues.push({code:'ledger-window',roomKey:room.key,text:room.name+' has '+room.omittedItems+' additional ledger items outside this bounded briefing. Review the incident evidence before assigning more work.'});
     if(room.omittedStateReports)issues.push({code:'state-report-window',roomKey:room.key,text:room.name+' has '+room.omittedStateReports+' additional participant state reports outside this bounded view. The latest displayed claim is not a team consensus.'});
@@ -158,10 +181,10 @@ export function collaborationText(view,{generation}={}) {
     for(const handoff of (view.handoffs||[]).slice(0,Math.min(items,4)))if(handoff.state!=='awaiting-owner')lines.push('\n'+short(handoffText(handoff),320));
     if(view.handoffCoverage?.omitted)lines.push(view.handoffCoverage.omitted+' more handoff records are retained outside this view; request missing ownership evidence.');
     for(const room of view.rooms) {
-      lines.push('\n'+room.name+' — latest state claim: '+(room.reportedStatus||'not provided')+(room.statusAt?' at '+new Date(room.statusAt).toISOString():''));
+      lines.push('\n'+room.name+' — latest state claim: '+(room.reportedStatus||'not provided')+(room.statusAt?' at '+new Date(room.statusAt).toISOString():'')+(room.statusCurrentForAuthor===false?' · historical; responder updated elsewhere':''));
       const reportLimit=detail>=80?6:detail>0?3:1;
       if(!room.reports.length)lines.push('No delivered report yet. Ask this team for its owner, action and next check.');
-      for(const report of (room.stateReports||[]).slice(0,reportLimit))lines.push('State claim '+report.state+' by '+short(report.author,24)+' at '+new Date(report.at).toISOString()+(report.stale?' · old report':'')+'.');
+      for(const report of (room.stateReports||[]).slice(0,reportLimit))lines.push('State claim '+report.state+' by '+short(report.author,24)+' at '+new Date(report.at).toISOString()+(report.currentForAuthor===false?' · historical; responder updated elsewhere':'')+(report.stale?' · old report':'')+'.');
       const omittedStates=(room.omittedStateReports||0)+Math.max(0,(room.stateReports||[]).length-reportLimit);if(omittedStates)lines.push(omittedStates+' participant state claims are outside this briefing; the latest claim is not team consensus.');
       for(const report of room.reports.slice(0,reportLimit))lines.push(short(report.author,24)+' at '+new Date(report.at).toISOString()+': '+(detail?'“'+short(report.text,detail)+'”':'report retained in the incident console.'));
       const omitted=(room.omittedReportAuthors||0)+Math.max(0,room.reports.length-reportLimit);
@@ -208,8 +231,16 @@ export class IncidentCollaboration {
       // Preserve historical age in the view, but do not create a new unread
       // round merely because a ruled-out theory or inactive task becomes old.
       // Active work/theories and service-state freshness still change the hash.
-      const digestRooms=view.rooms.map(({briefing,...room})=>({...room,work:room.work.map(item=>activeWork(item)?item:{...item,stale:false}),theories:room.theories.map(item=>activeTheory(item)?item:{...item,stale:false})}));
+      const expandedRooms=view.rooms.map(({briefing,...room})=>({...room,statusStale:room.statusCurrentForAuthor===false?false:room.statusStale,stateReports:room.stateReports.map(report=>report.currentForAuthor?report:{...report,stale:false}),work:room.work.map(item=>activeWork(item)?item:{...item,stale:false}),theories:room.theories.map(item=>activeTheory(item)?item:{...item,stale:false})}));
+      // Default current-state metadata must not create an unread round after
+      // upgrade. Preserve the older fingerprint's field order and shape;
+      // historical positions remain a material change. Receipt order already
+      // selects the winning evidence ID, rather than being another notice.
+      const digestRooms=expandedRooms.map(({statusCurrentForAuthor,...room})=>({...room,...(statusCurrentForAuthor===false?{statusCurrentForAuthor:false}:{}),stateReports:room.stateReports.map(report=>({state:report.state,evidenceId:report.evidenceId,at:report.at,author:report.author,participantKey:report.participantKey,text:report.text,stale:report.stale,verified:report.verified,...(report.currentForAuthor===false?{currentForAuthor:false}:{})}))}));
       const digest=hash({...content,rooms:digestRooms,issues:view.issues.filter(issue=>!issue.delivery)});
+      // Earlier trial builds included the default metadata in this receipt.
+      // Canonicalize an equivalent saved receipt without another broadcast.
+      if(state.last_hash!==digest&&state.last_hash===hash({...content,rooms:expandedRooms,issues:view.issues.filter(issue=>!issue.delivery)})){await q('UPDATE sre_coordination SET last_hash=? WHERE incident_id=?',[digest,incidentId]);state.last_hash=digest;}
       if(!view.rooms.length||view.rooms.length===1&&!Number(state.generation)&&!view.issues.some(issue=>reconciliationCodes.has(issue.code))){await q('UPDATE sre_coordination SET last_hash=? WHERE incident_id=?',[digest,incidentId]);return false;}
       if(requestId) {
         const [prior]=await q('SELECT id FROM sre_outbox WHERE id LIKE ? LIMIT 1',['coordination:'+incidentId+':request:'+requestId+':%']);if(prior)return false;

@@ -38,7 +38,7 @@ for(const dialect of ['sqlite','postgres']){
  });
  test(dialect+': exhausted investigation remains a manual retry condition and cannot become an automatic orphan retry',async()=>{
   const f=await fixture(dialect);try{
-   f.advance(10);await f.question();const job=await f.r.store.claim(f.r.worker.owner);await f.r.store.fail({...job,attempts:3},Error('Fictional denied provider read'));const report=await f.monitor.snapshot();assert.equal(report.state,'needs-attention');assert.ok(report.conditions.some(c=>c.code==='investigation_dead'));assert.equal(orphan(report),undefined);
+   f.advance(10);await f.question();for(let attempt=1;attempt<=3;attempt++){const job=await f.r.store.claim(f.r.worker.owner);assert.equal(job.attempts,attempt);await f.r.store.fail(job,Error('Fictional denied provider read'));f.advance(10000);}const report=await f.monitor.snapshot();assert.equal(report.state,'needs-attention');assert.ok(report.conditions.some(c=>c.code==='investigation_dead'));assert.equal(orphan(report),undefined);
    const before=await f.r.store.db.query('SELECT * FROM sre_jobs ORDER BY id');await f.monitor.observe();assert.deepEqual(await f.r.store.db.query('SELECT * FROM sre_jobs ORDER BY id'),before,'Health observation must not retry exhausted work');
   }finally{await f.r.close();}
  });

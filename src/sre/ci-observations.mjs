@@ -23,10 +23,12 @@ export function ciObservationOrigin(event,id,service){
   return {...body,checksum:hash([id,body])};
 }
 
-function fact(row,service,scopeHash,ci){
+export const savedPipelineStatus=value=>typeof value==='string'&&/^[a-z_]{1,64}$/.test(value)?value:'unknown';
+
+function fact(row,service,scopeHash,ci,{allowUnknownStatus=false}={}){
   try{
     const event=JSON.parse(row.source_event),projection=JSON.parse(row.projection),p=event.payload?.pipeline;
-    if(hash(event)!==row.body_hash||hash([event.source,event.serviceKey,event.id])!==row.id||event.source!=='gitlab'||event.serviceKey!==service.key||event.kind!=='change'||event.payload?.stage!=='ci-update'||event.payload.sha!==ci.sha||p?.sha!==ci.sha||p.id!==ci.pipelineId||typeof p.status!=='string'||!/^[a-z_]{1,64}$/.test(p.status))throw Error();
+    if(hash(event)!==row.body_hash||hash([event.source,event.serviceKey,event.id])!==row.id||event.source!=='gitlab'||event.serviceKey!==service.key||event.kind!=='change'||event.payload?.stage!=='ci-update'||event.payload.sha!==ci.sha||p?.sha!==ci.sha||p.id!==ci.pipelineId||!allowUnknownStatus&&(typeof p.status!=='string'||!/^[a-z_]{1,64}$/.test(p.status)))throw Error();
     const {observationOrigin:origin,...original}=projection;
     if(hash(original)!==hash(event.payload))throw Error();
     let time,scoped=false;
@@ -42,9 +44,11 @@ function fact(row,service,scopeHash,ci){
       time=sourceTime(p);scoped=event.id==='change-read-ci:'+hash([scopeHash,p]);
       if(scoped&&time.kind==='updated'&&event.at!==time.at)throw Error();
     }
-    return {eventId:row.id,projectId:ci.projectId,pipelineId:p.id,sha:p.sha,status:p.status,providerUpdatedAt:time.at,timeKind:time.kind,receivedAt:Number(row.received_at),scoped};
+    const status=allowUnknownStatus?savedPipelineStatus(p.status):p.status;
+    return {eventId:row.id,projectId:ci.projectId,pipelineId:p.id,sha:p.sha,status,providerUpdatedAt:time.at,timeKind:time.kind,receivedAt:Number(row.received_at),scoped,...(allowUnknownStatus?{statusKnown:status!=='unknown'}:{})};
   }catch{throw new StorageError(new Error('Invalid saved pipeline observation or scope projection'));}
 }
+export {fact as parseSavedPipelineFact};
 
 export async function reconcileReadCI(q,service,receipt,dialect){
   const ci=receipt.ci;if(receipt.provider!=='gitlab'||ci?.state!=='observed')return ci;

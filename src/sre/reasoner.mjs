@@ -5,28 +5,37 @@ import { ruleAttribution } from './rule-attribution.mjs';
 import {collaborationText} from './collaboration.mjs';
 import {associationDecision,associationText} from './change-associations.mjs';
 import {signalDigestText} from './signal-digest.mjs';
+import {sourceFindingSchema,validateSourceFindings,reportedSourceFindings} from './source-references.mjs';
+import {evidenceRequestSchema,validateEvidenceRequests} from './evidence-request.mjs';
 export { boundedContext,modelContextLimits } from './model-context.mjs';
 
 export const investigationSchema={type:'object',additionalProperties:false,properties:{summary:{type:'string'},hypotheses:{type:'array',items:{type:'string'},maxItems:8},changeAssessment:{type:'string',enum:['likely','unlikely','unknown']},candidateSha:{type:['string','null']},evidenceIds:{type:'array',items:{type:'string'},maxItems:20},unknowns:{type:'array',items:{type:'string'},maxItems:10},nextSteps:{type:'array',items:{type:'string'},maxItems:10}},required:['summary','hypotheses','changeAssessment','candidateSha','evidenceIds','unknowns','nextSteps']};
 investigationSchema.properties.risk=riskSchema;investigationSchema.required.push('risk');
+investigationSchema.properties.sourceFindings={type:'array',items:sourceFindingSchema,maxItems:8};
+investigationSchema.properties.evidenceRequests={type:'array',items:evidenceRequestSchema,maxItems:2};
 
-export function validateInvestigation(data,context) {
+export function validateInvestigation(data,context,{deliveredContext}={}) {
   if(!data || typeof data.summary!=='string'||data.summary.length>8000 || !['likely','unlikely','unknown'].includes(data.changeAssessment))throw new Error('Invalid investigation output');
   const ids=new Set(context.evidence.map(x=>x.id));
   for(const key of ['hypotheses','evidenceIds','unknowns','nextSteps'])if(!Array.isArray(data[key])||data[key].length>20||data[key].some(x=>typeof x!=='string'||x.length>4000))throw new Error('Invalid investigation '+key);
   if(data.evidenceIds.some(id=>!ids.has(id)))throw new Error('Investigation cited evidence outside this incident');
   if(data.candidateSha!==null&&!context.deployments.some(x=>x.sha===data.candidateSha&&x.at<=context.incident.started_at))throw new Error('Investigation cited an ineligible deployment');
   const risk=validateRisk(data.risk,context);
-  return {...data,risk,text:[context.incident.id+' — '+data.summary,'Outage outlook ('+(context.riskScope?.stage||'incident')+'): '+risk.likelihood+'. '+risk.likelihoodRationale,'Analytic confidence: '+risk.confidence+'. '+risk.confidenceRationale,'Evidence: '+data.evidenceIds.join(', '),'Change assessment: '+data.changeAssessment,...data.hypotheses.map(x=>'Hypothesis: '+x),...risk.assumptions.map(x=>'Assumption: '+x),...risk.alternatives.map(x=>'Alternative: '+x),...data.unknowns.map(x=>'Missing evidence: '+x),...risk.indicators.map(x=>'Monitor: '+x),...data.nextSteps.map(x=>'Next: '+x),'Judgment update: '+risk.changeExplanation,'Recovery: request a rollback assessment for this incident. Execution requires a fresh, compatible artifact and explicit operator approval.'].join('\n')};
+  const requests=validateEvidenceRequests(data.evidenceRequests);if(requests.length&&!context.evidenceAcquisition?.enabled)throw Error('Follow-up evidence reads are not enabled');
+  const sourceFindings=validateSourceFindings(data.sourceFindings,context,deliveredContext||(data.sourceFindings?.length?boundedContext(context):null));
+  if(sourceFindings.some(finding=>!data.evidenceIds.includes(finding.evidenceId)))throw Error('Source finding needs its supporting investigation evidence reference');
+  return {...data,...(data.sourceFindings!==undefined?{sourceFindings}:{}),risk,text:[context.incident.id+' — '+data.summary,'Outage outlook ('+(context.riskScope?.stage||'incident')+'): '+risk.likelihood+'. '+risk.likelihoodRationale,'Analytic confidence: '+risk.confidence+'. '+risk.confidenceRationale,'Evidence: '+data.evidenceIds.join(', '),'Change assessment: '+data.changeAssessment,...data.hypotheses.map(x=>'Hypothesis: '+x),...sourceFindings.map(f=>'Source hypothesis (verified location; cause unverified): '+f.provider+' '+f.project+'@'+f.sha+' '+f.path+':L'+f.startLine+'-L'+f.endLine+' — '+f.explanation+'; evidence '+f.evidenceId),...risk.assumptions.map(x=>'Assumption: '+x),...risk.alternatives.map(x=>'Alternative: '+x),...data.unknowns.map(x=>'Missing evidence: '+x),...risk.indicators.map(x=>'Monitor: '+x),...data.nextSteps.map(x=>'Next: '+x),'Judgment update: '+risk.changeExplanation,'Recovery: request a rollback assessment for this incident. Execution requires a fresh, compatible artifact and explicit operator approval.'].join('\n')};
 }
 
 export class RulesReasoner {
   async investigate(context,{question}={}) {
     const attribution=ruleAttribution({...context,evidence:context.evidence.filter(row=>row.kind!=='code_review'||!['withdrawn','historical','unknown'].includes(associationDecision(context,row)))}),{findings,diagnoses}=attribution;
-    const evidenceIds=[...new Set([...attribution.runtimeEvidenceIds,...attribution.causalEvidenceIds,...findings.map(item=>item.evidenceId)])].slice(0,20);
+    const delivered=context.sourceScope?.logLocations||context.sourceScope?.discovery?boundedContext(context):null,sourceFindings=delivered?reportedSourceFindings(context,delivered):[],sourceIds=new Set(sourceFindings.map(f=>f.evidenceId)),logIds=(delivered?.sourceCode?.files||[]).filter(file=>sourceIds.has(file.evidenceId)).flatMap(file=>(file.reportedLocations||file.candidateLogLocations||[]).map(location=>location.evidenceId));
+    const evidenceIds=[...new Set([...sourceIds,...logIds,...attribution.runtimeEvidenceIds,...attribution.causalEvidenceIds,...findings.map(item=>item.evidenceId)])].slice(0,20);
     const recovered=context.incident.status==='resolved';
     const data={summary:recovered?'Recovery verified for the independently attested deployment and check window.':diagnoses.length?diagnoses.map(item=>item.summary).join(' '):findings.length?'Fixture code review: '+findings.map(item=>item.issue).join(' '):'Evidence has been collected; a model-backed investigation or an operator is needed to identify the cause.',hypotheses:diagnoses.length?diagnoses.map(item=>item.summary):findings.map(item=>item.issue),changeAssessment:attribution.changeAssessment,candidateSha:attribution.candidateSha,evidenceIds,unknowns:attribution.unknowns,nextSteps:[question?'Review the collected evidence for the operator request: '+question.slice(0,3900):'Review source logs, linked changes, and the incident timeline.','Check business invariants as well as service health.']};
     data.risk=fixtureRisk(context);
+    if(sourceFindings.length){data.sourceFindings=sourceFindings;if(!diagnoses.length&&!findings.length&&!recovered)data.summary='Source was retrieved for reported error locations; the cause remains unknown. Inspect the mapped code, input and runtime revision together.';data.nextSteps.push('Compare the cited error records with their retrieved source locations and the upstream input contract; verify runtime/source identity independently.');}
     const analysis={...validateInvestigation(data,context),mode:'rules',codeReview:{mode:'fixture-specific parsed policy comparisons',findings,inspectedComparisons:attribution.inspectedComparisons,supportedComparisons:attribution.supportedComparisons,coverage:'Only five policy regressions in the known auction module structure. Complete immutable before/after sources are parsed, never executed. No general code-review accuracy is claimed.'}};
     if(findings.length)analysis.text+='\nScoped code inspection (conditional findings in the known auction module):\n'+findings.slice(0,4).map(item=>item.provider+' '+item.path+' · '+(item.baseSha?.slice(0,12)||'base unknown')+' → '+(item.headSha?.slice(0,12)||'head unknown')+': '+item.issue).join('\n');
     if(context.signalDigest)analysis.text+='\n\n'+signalDigestText(context.signalDigest,{groupLimit:3,changeLimit:2});
@@ -64,6 +73,6 @@ export class EveReasoner {
     try {result=await response.result();}
     catch(error) {await session.cancel().catch(()=>{});throw error;}
     if(result.status==='failed'||!result.data)throw new Error('The model investigation did not return a validated result');
-    return {analysis:{...validateInvestigation(result.data,context),mode:'eve'},remoteState:session.state};
+    return {analysis:{...validateInvestigation(result.data,context,{deliveredContext:modelContext}),mode:'eve'},remoteState:session.state};
   }
 }

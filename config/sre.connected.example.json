@@ -20,6 +20,7 @@
       "name": "auction-api",
       "tenant": "replace-with-logical-tenant",
       "environment": "staging",
+      "investigation": {"followUp": {"enabled": false}},
       "github": {
         "enabled": false,
         "base": "https://api.github.com",
@@ -32,6 +33,7 @@
         "enabled": false,
         "base": "https://gitlab.example.com",
         "project": "123",
+        "sourceInspection": {"enabled": false},
         "tokenEnv": "GITLAB_READ_TOKEN",
         "webhookSecretEnv": "GITLAB_WEBHOOK_SECRET",
         "retryScope": "REPLACE-WITH-GITLAB-ACCOUNT-LABEL"

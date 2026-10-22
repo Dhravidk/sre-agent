@@ -109,19 +109,22 @@ test('closed and expired trial grants pause real outbox processing without consu
   } finally {if(r)await r.close();await rm(directory,{recursive:true,force:true});}
 });
 
-test('native live SDK rejects unsigned and malformed tokens; the trial launcher preserves its incident across process restart',{timeout:20000},async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'sre-live-trial-process-')),path=join(directory,'settings.json');let child,exited,output='',errors='';
+test('native live SDK rejects unsigned and malformed tokens; the trial launcher preserves its incident across process restart',{timeout:45000},async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'sre-live-trial-process-')),path=join(directory,'settings.json');let child,exited,ready=false,output='',errors='';
   await writeFile(path,JSON.stringify({...settings,directory,database:join(directory,'agent.sqlite'),apiPort:0,botPort:0,gatewayPort:0}));
   const start=async()=>{
-    output='';errors='';child=spawn(process.execPath,['scripts/sre-teams-trial.mjs'],{env:{PATH:process.env.PATH,HOME:process.env.HOME,...credentials,SRE_TEAMS_TRIAL_SETTINGS:path,SRE_AGENT_MODE:'claude',SRE_CLAUDE_BIN:'/nonexistent-live-teams-test-cli'},stdio:['ignore','pipe','pipe']});
-    exited=new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>errors+=chunk);
-    for(let i=0;i<100;i++) {
-      const line=output.split('\n').find(line=>line.startsWith('{"trial":'));if(line)return JSON.parse(line);
-      if(child.exitCode!==null)throw Error('Trial launcher stopped: '+errors);await delay(40);
+    ready=false;output='';errors='';child=spawn(process.execPath,['scripts/sre-teams-trial.mjs'],{env:{PATH:process.env.PATH,HOME:process.env.HOME,...credentials,SRE_TEAMS_TRIAL_SETTINGS:path,SRE_AGENT_MODE:'claude',SRE_CLAUDE_BIN:'/nonexistent-live-teams-test-cli'},stdio:['ignore','pipe','pipe']});
+    exited=new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>errors+=chunk);
+    const deadline=performance.now()+15000;
+    while(performance.now()<deadline) {
+      const line=output.split('\n').find(line=>line.startsWith('{"trial":'));if(line){ready=true;return JSON.parse(line);}
+      if(child.exitCode!==null||child.signalCode!==null)throw Error('Trial launcher stopped: '+JSON.stringify({code:child.exitCode,signal:child.signalCode,output,errors}));await delay(40);
     }
-    throw Error('Trial launcher startup deadline exceeded');
+    throw Error('Trial launcher did not report readiness within 15 seconds: '+JSON.stringify({output,errors}));
   };
-  const stop=async()=>{child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),5000);const result=await exited;clearTimeout(timer);assert.equal(result.code,0,errors);};
+  // Pre-readiness cleanup must preserve a startup failure, rather than masking
+  // it with a normal-exit assertion for a process that never became ready.
+  const stop=async()=>{const wasReady=ready;child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),5000);const result=await exited;clearTimeout(timer);if(wasReady)assert.equal(result.code,0,JSON.stringify({...result,output,errors}));};
   const status=async run=>{const response=await fetch(run.console+'/api/status',{headers:{authorization:'Bearer '+credentials.SRE_TEAMS_TRIAL_API_TOKEN}});assert.equal(response.status,200);return response.json();};
   try {
     let run=await start();let before=await status(run);

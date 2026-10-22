@@ -6,6 +6,7 @@ import {rootConversation} from './collaboration.mjs';
 import {teamsConversationAllowed} from './teams-access.mjs';
 import {readContactMessage,boundTeamsText} from './contact-messages.mjs';
 import {routeWaitReason,routeWaitDelayMs,alertConversationId} from './teams-routing.mjs';
+import {retireObsoleteAlertFailure} from './alert-replies.mjs';
 
 export const teamsDeliveryDefaults=Object.freeze({timeoutMs:15000,maxInFlight:4});
 const leaseMs=90000,scopeSql="COALESCE(o.conversation_key,'incident:'||o.incident_id,'message:'||o.id)";
@@ -86,6 +87,7 @@ export class TeamsOutbox {
    const [room]=await q('SELECT * FROM sre_conversations WHERE id=? AND enabled=1',[conversation.id]);const service=this.services.find(s=>s.key===room?.service_key);
    if(!room||!service||service.teams.tenantId!==room.tenant_id||!teamsConversationAllowed(service.teams,room.conversation_id))throw Error('Conversation access was revoked');
    if(message.incident_id){await this.store.authorizeIncidentConversation(room.id,message.incident_id,q);if(message.conversation_key&&room.incident_id!==message.incident_id)throw Error('Conversation no longer follows this incident');}
+   if(await retireObsoleteAlertFailure(this.store,q,message,room,owned))return null;
    const prepared={version:1,outboxId:message.id,incidentId:message.incident_id,conversationKey:room.id,attempt:Number(message.attempts),preparedAt:now,timeoutMs:this.timeoutMs,claimLeaseUntil:Number(owned.lease_until),originalHash:hash(message.text),text,textHash:hash(text)};
    await save(q,'teams-delivery:prepared:'+message.id+':'+message.attempts,prepared,now);
    if(Number(owned.lease_until)<=await this.store.coordinationNow(q)){await q("UPDATE sre_outbox SET status='unknown',error='Delivery claim expired while preparing transport; inspect before retrying',lease_owner=NULL WHERE id=? AND lease_owner=?",[message.id,this.owner]);return null;}

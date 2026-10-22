@@ -29,9 +29,10 @@ try{
   runtime=await createSreRuntime({config,connectors:new Map([[service.key,{servicenow:snow}]]),sender,qaAdapter:createPilotQaAdapter(join(directory,'qa'))});
   console.log('Preparing or reopening the persisted fictional multi-team rehearsal. Claude, live Teams and live deployments are off.');
   const state=await seedRehearsal(runtime);config.simulationGuide=rehearsalGuide(state);
-  await writeFile(join(directory,'ready.json'),JSON.stringify({at:new Date().toISOString(),console:'http://127.0.0.1:'+port,primaryId:state.primaryId,providerId:state.providerId,planId:state.planId,claudeEnabled:false,liveTeams:false,liveDeployments:false},null,2)+'\n',{mode:0o600});
+  const fence=await runtime.store.restoreFence(),recoveryHold=fence?.active===true;
+  await writeFile(join(directory,'ready.json'),JSON.stringify({at:new Date().toISOString(),console:'http://127.0.0.1:'+port,primaryId:state.primaryId,providerId:state.providerId,planId:state.planId,recoveryHold,restoreId:fence?.restoreId||null,claudeEnabled:false,liveTeams:false,liveDeployments:false},null,2)+'\n',{mode:0o600});
   await new Promise((done,failed)=>{runtime.server.once('error',failed);runtime.server.listen(port,'127.0.0.1',done);});
-  console.log(JSON.stringify({status:'ready',console:'http://127.0.0.1:'+port,database:config.sqlitePath,primaryId:state.primaryId,providerId:state.providerId,planId:state.planId,scope:'Fictional provider/Teams data and unread drawing metadata; actual generated source and approval-gated local QA. No native Microsoft or external repository transport.'}));
+  console.log(JSON.stringify({status:'ready',console:'http://127.0.0.1:'+port,database:config.sqlitePath,primaryId:state.primaryId,providerId:state.providerId,planId:state.planId,recoveryHold,restoreId:fence?.restoreId||null,scope:'Fictional provider/Teams data and unread drawing metadata; actual generated source and approval-gated local QA. No native Microsoft or external repository transport.'}));
 }catch(error){await runtime?.close();await snow?.close();await mock.close();throw error;}
 let closing=false;
 for(const signal of ['SIGINT','SIGTERM'])process.once(signal,async()=>{if(closing)return;closing=true;await runtime.close();await snow.close();await mock.close();});

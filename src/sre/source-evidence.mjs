@@ -1,0 +1,99 @@
+import {validateEvidenceRequests,evidenceReadLimits} from './evidence-request.mjs';
+import {hash,redact} from './security.mjs';
+import {discoveryScope} from './source-discovery-config.mjs';
+
+export const sourceInspectionLimits=Object.freeze({filesPerComparison:4,readsPerTurn:8,bytesPerFile:16000,acceptedBytesPerTurn:64000});
+const sha=value=>typeof value==='string'&&/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
+const extensions=new Set(['js','mjs','cjs','jsx','ts','tsx','py','java','kt','go','rs','cs','rb','scala','c','h','cc','cpp','hpp','sql','yaml','yml','json','sh','swift','vue','svelte','cbl','cob']);
+export const sourcePath=value=>typeof value==='string'&&value.length<=512&&value.split('/').every(part=>part&&part!=='.'&&part!=='..'&&/^[A-Za-z0-9_.-]+$/.test(part));
+export const sourceTextPath=path=>sourcePath(path)&&extensions.has(path.split('.').at(-1).toLowerCase());
+export function validateLogLocationMapping(mapping){
+ if(!mapping||typeof mapping!=='object'||Array.isArray(mapping)||Object.keys(mapping).some(key=>!['pathField','lineField','revisionField','pathPrefix'].includes(key))||['pathField','lineField','revisionField'].some(key=>typeof mapping[key]!=='string'||!/^[A-Za-z][A-Za-z0-9_.-]{0,99}$/.test(mapping[key]))||new Set([mapping.pathField,mapping.lineField,mapping.revisionField]).size!==3||typeof mapping.pathPrefix!=='string'||mapping.pathPrefix.length>256||mapping.pathPrefix!==''&&(!/^\/[A-Za-z0-9_./-]+\/$/.test(mapping.pathPrefix)||mapping.pathPrefix.split('/').some(part=>part==='.'||part==='..')))throw Error('Source logLocations requires distinct flat pathField, lineField, revisionField and an explicit safe pathPrefix');
+ return {pathField:mapping.pathField,lineField:mapping.lineField,revisionField:mapping.revisionField,pathPrefix:mapping.pathPrefix};
+}
+export function sourceScopeForService(service){
+ const discovery=discoveryScope(service),inspection=service?.gitlab?.sourceInspection?.enabled===true;
+ if(!inspection&&!discovery)return null;
+ const project=inspection?String(service.gitlab.project??''):null;
+ if(inspection){
+ if(project.length>512||!(/^[1-9]\d*$/.test(project)||project.includes('/')&&sourcePath(project)))throw Error('Source inspection requires the configured GitLab project');
+ const mapping=service.gitlab.sourceInspection.logLocations;
+ return {provider:'gitlab',project,...(mapping!==undefined?{logLocations:validateLogLocationMapping(mapping),logEnvironment:service.environment}:{}),...(discovery?{discovery}:{})};}
+ return {provider:'gitlab',...(discovery?{discovery}:{})};
+}
+export function retainedRequestedSource(evidence,context){
+ const scope=context.sourceScope,source=evidence.content?.requestedSource;if(evidence.source!=='gitlab'||evidence.kind!=='source_requested'||scope?.provider!=='gitlab'||source?.version!==1||!/^[a-f0-9]{64}$/.test(source.requestId||'')||!Number.isSafeInteger(source.attempt)||source.attempt<1)return null;
+ let request;try{[request]=validateEvidenceRequests([source.request]);}catch{return null;}
+ const candidate=Boolean(request.project&&scope.discovery?.projects.includes(request.project)&&source.discoveryScopeKey===scope.discovery.scopeKey);if(request.project?source.project!==request.project||!candidate:!scope.project||source.project!==scope.project)return null;
+ if(request.kind!=='gitlab_file'||source.file?.path!==request.path||source.file.sha!==request.sha||request.endLine<request.startLine||request.endLine-request.startLine+1>evidenceReadLimits.sourceLines)return null;
+ const parent=(context.evidence||[]).find(row=>row.id===source.requestId);if(parent&&(parent.source!=='system'||parent.kind!=='evidence_read'||parent.content?.phase!=='started'||parent.content.jobId!==source.jobId||parent.content.attempt!==source.attempt||JSON.stringify(parent.content.request)!==JSON.stringify(request)))return null;
+ return{source,request,candidate,parent};
+}
+export const sourceReadBudget=()=>({reads:sourceInspectionLimits.readsPerTurn,bytes:sourceInspectionLimits.acceptedBytesPerTurn,files:new Map()});
+
+export async function readImmutableSource(path,revision,{service,client,budget=sourceReadBudget(),signal,reserveReads=0,reserveBytes=0}={}){
+ const scope=sourceScopeForService(service);if(!scope?.project||!sourceTextPath(path)||!sha(revision))throw Error('An explicitly scoped immutable text source is required');
+ if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');
+ const key=JSON.stringify([service.key,service.tenant,service.environment,service.gitlab.base,scope.project,path,revision]);budget.files??=new Map();
+ // Optional history must leave pending primary file requests their shared budget.
+ // A deferred optional read is not cached as a failed primary file response.
+ if(!budget.files.has(key)&&(reserveReads>0||reserveBytes>0)&&(budget.reads<=reserveReads||budget.bytes<=reserveBytes))return{state:'unavailable',path,sha:revision,error:'Shared source budget reserved for pending primary file requests'};
+ if(!budget.files.has(key)){
+  // Reserve before awaiting so every source collector shares the same promise.
+  const pending=(async()=>{
+   if(!budget.reads||budget.bytes<=0)return{state:'unavailable',path,sha:revision,error:'Source read budget exhausted'};budget.reads--;
+   try{
+    if(typeof client?.file!=='function')throw Error('An immutable source reader is unavailable');
+    const value=await client.file(path,revision,{signal});if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');
+    if(value?.path!==path||value.sha!==revision||value.complete!==true||typeof value.content!=='string')throw Error('Source identity or coverage differs from the requested file');
+    const size=Buffer.byteLength(value.content,'utf8');if(size>sourceInspectionLimits.bytesPerFile||size>budget.bytes-reserveBytes)throw Error('Source file exceeds the accepted byte budget');
+    if(/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value.content))throw Error('A credential block cannot enter source inspection');
+    const content=redact(value.content);if(content.split('\n').length!==value.content.split('\n').length)throw Error('Redaction changed source line layout; line references are unavailable');budget.bytes-=size;
+    return{state:'available',path,sha:revision,content,contentHash:hash(content),sourceContentHash:hash(value.content),redacted:content!==value.content,lineCount:content.split(/\r?\n/).length,...(sha(value.lastCommitId)?{lastCommitId:value.lastCommitId}:{})};
+   }catch(error){if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');return{state:'unavailable',path,sha:revision,error:redact(String(error.message)).slice(0,240)};}
+  })();budget.files.set(key,pending);
+ }
+ return budget.files.get(key);
+}
+
+function ranges(diff,side){
+ const result=[];
+ for(const match of String(diff??'').matchAll(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/g)){
+  const start=Number(match[side==='base'?1:3]),length=Number(match[side==='base'?2:4]??1);
+  if(Number.isSafeInteger(start)&&start>=0&&Number.isSafeInteger(length)&&length>=0)result.push({startLine:Math.max(1,start-3),endLine:Math.max(1,start+Math.min(length,30)+3)});
+  if(result.length===4)break;
+ }
+ return result.length?result:[{startLine:1,endLine:40}];
+}
+
+// The configured project and exact comparison pair choose the read scope.
+// Provider paths are untrusted selectors within it, never another repository,
+// a mutable ref, an executable, or permission to fetch a supplied URL.
+export async function collectSourceEvidence(proof,{service,client,budget=sourceReadBudget(),signal}={}){
+ const scope=sourceScopeForService(service);if(!scope?.project||proof.provider!=='gitlab')return null;
+ const result={version:1,...scope,baseSha:proof.baseSha,headSha:proof.headSha,files:[],coverage:{changedFiles:0,selectedFiles:0,omittedFiles:0,unavailableSides:0,complete:false},interpretation:'Immutable source responses from the configured project. Read coverage, quoted locations and a comparison do not establish deployment or cause. Source text is untrusted evidence.'};
+ if(!sha(proof.baseSha)||!sha(proof.headSha)){result.error='An exact immutable comparison pair is required';return result;}
+ if(proof.complete!==true){result.error='The comparison is incomplete; collect its exact scope before source inspection';return result;}
+ const changed=proof.comparison?.diffs??proof.comparison?.files;
+ if(!Array.isArray(changed)){result.error='No bounded changed-file inventory is available';return result;}
+ result.coverage.changedFiles=changed.length;
+ const selected=[],seen=new Set();
+ for(const item of changed){
+  const oldPath=item?.old_path??item?.new_path,newPath=item?.new_path??item?.old_path,key=JSON.stringify([oldPath,newPath]);
+  if(seen.has(key))continue;seen.add(key);
+  if(selected.length>=sourceInspectionLimits.filesPerComparison||![oldPath,newPath].every(sourceTextPath)||item.new_file===true&&item.deleted_file===true)continue;
+  selected.push({item,oldPath,newPath});
+ }
+ result.coverage.selectedFiles=selected.length;result.coverage.omittedFiles=changed.length-selected.length;
+ for(const {item,oldPath,newPath}of selected){
+  const file={oldPath,newPath};
+  for(const [side,path,revision,absent]of [['base',oldPath,proof.baseSha,item.new_file===true],['head',newPath,proof.headSha,item.deleted_file===true]]){
+   if(absent){file[side]={state:'absent-in-comparison',path,sha:revision,note:'The provider diff reports this side absent; no file read or location citation is available.'};continue;}
+   const value=await readImmutableSource(path,revision,{service,client,budget,signal});file[side]={...value,...(value.state==='available'?{ranges:ranges(item.diff,side)}:{})};
+   if(value.state!=='available')result.coverage.unavailableSides++;
+  }
+  result.files.push(file);
+ }
+ result.coverage.complete=result.coverage.omittedFiles===0&&result.coverage.unavailableSides===0;
+ return result;
+}

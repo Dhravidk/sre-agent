@@ -19,6 +19,8 @@ export async function readRestoreFence(query,lock=false) {
   const [row]=await query('SELECT value FROM sre_checkpoints WHERE id=?'+(lock?' FOR UPDATE':''),[key]);
   return row?decode(row.value):null;
 }
+// Descriptive receipt only. This does not release a hold or authorize work.
+export const restoreSummary=fence=>({active:fence?.active===true,restoreId:fence?.restoreId||null});
 const save=async(q,id,value,now)=>q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',[id,JSON.stringify(value),now]);
 
 // Offline preparation requires stopped old agents and revoked write access.
@@ -60,7 +62,11 @@ export async function prepareRestore(store,{restoreId,backupSha256,backupAt,reas
     // evidence. Publication receipts are positive certainty and must reset.
     // Responder aliases describe restored conversations; they do not grant
     // membership, incident sharing, acknowledgement or action authority.
-    await q("DELETE FROM sre_checkpoints WHERE id NOT LIKE 'recovery:database-restore%' AND id NOT LIKE 'change-association:%' AND id NOT LIKE 'outbox-contact:%' AND id NOT LIKE 'contact-delivery:%' AND id NOT LIKE 'teams-delivery:%' AND id NOT LIKE 'coordination-attention-covered:%' AND id NOT LIKE 'teams-room-label:%'");
+    // Question receipts only retain accepted-request identity. They cannot
+    // revive work, certify post-backup facts or authorize any action.
+    // The exact rehearsal checkpoint identifies its existing fictional dataset.
+    // It does not certify freshness or authorize resuming an incomplete setup.
+    await q("DELETE FROM sre_checkpoints WHERE id NOT LIKE 'recovery:database-restore%' AND id NOT LIKE 'change-association:%' AND id NOT LIKE 'outbox-contact:%' AND id NOT LIKE 'contact-delivery:%' AND id NOT LIKE 'teams-delivery:%' AND id NOT LIKE 'coordination-attention-covered:%' AND id NOT LIKE 'teams-room-label:%' AND id NOT LIKE 'operator-question-request:%' AND id NOT LIKE 'simulation-teams-request:%' AND id NOT LIKE 'initial-read-start:%' AND id NOT LIKE 'initial-read-end:%' AND id<>?",['rehearsal:multi-team:v1']);
     for(const incident of await q('SELECT id,updated_at,source_states FROM sre_incidents')) {
       const status=Object.values(JSON.parse(incident.source_states)).some(item=>item.status==='OPEN')?'open':'verifying';
       await q('UPDATE sre_incidents SET status=?,analysis=NULL,revision=revision+1,updated_at=? WHERE id=?',[status,Math.max(now,Number(incident.updated_at)),incident.id]);
