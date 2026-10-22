@@ -1,0 +1,638 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-22",
+  "sourceCommit": "7c66e1e05a8a89da88d8829f8e3e6ed945b34dcf",
+  "sourceAggregateSha256": "ba156662bc490469b2d0ba564fecbac94ec9adb0f88d7244cb1664007f711e06",
+  "frozenSourceFiles": 344,
+  "allSourceHashesMatched": true,
+  "nativeScope": "Actual restricted Codex CLI. Authored vendor contracts and five repeated decision classes; local SQL and mock GitLab reads. No live Dynatrace/GitLab acceptance, external delivery, deployment execution or production capacity claim. Sequential runs, not randomized trials.",
+  "tests": {
+    "tests": 2545,
+    "pass": 2545,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "command": "pnpm test --test-concurrency=8",
+    "durationMs": 250453.279667,
+    "logSha256": "46dbf39a7781bcd19f8e816a3afed43439c7c1d8a3f13880172e7543a0e2ac8d",
+    "node": "24.19.0",
+    "pnpm": "11.25.0"
+  },
+  "runs": [
+    {
+      "label": "consolidation-baseline",
+      "sourceCommit": "0e0e90926eafba31e579a0c90aa59ed2984f73bc",
+      "reportSha256": "595200389fa3040f54227fabc4ba0f0fe3887cd167446cde9fa312834da247c2",
+      "status": "passed",
+      "inference": {
+        "requestedModel": "gpt-6.1-sol",
+        "effort": "medium",
+        "timeoutMs": 180000,
+        "citationProtocol": "snapshot-alias-v1",
+        "promptHash": "864fb29fb1f05163430c1d80a098cfa60dd6973b834877103bfa72015392df65"
+      },
+      "cliVersion": "0.163.0-alpha.10.2",
+      "concurrency": 4,
+      "freshnessPolicy": {
+        "quietMs": 5000,
+        "maxWaitMs": 60000,
+        "priorityRecoveries": 1
+      },
+      "calls": 45,
+      "validated": 45,
+      "checks": {
+        "boundedConcurrency": true,
+        "peerCapacityExcluded": true,
+        "allBursts": true,
+        "intakeRetained": true,
+        "duplicates": true,
+        "fairFirstPass": true,
+        "quietPublishedDuringFlood": true,
+        "allGroupsServed": true,
+        "requestScope": true,
+        "boundedBatches": true,
+        "allValidatedJudgments": true,
+        "noModelFailures": true,
+        "restart": true,
+        "allJobsDrained": true,
+        "noDeployment": true,
+        "noExternalDelivery": true,
+        "boundedRequestBytes": true,
+        "allQuestionRepliesQueued": true
+      },
+      "latency": {
+        "byCohort": {
+          "busy": {
+            "questions": 32,
+            "published": 32,
+            "queuedReplies": 32,
+            "publicationP50Ms": 302554,
+            "publicationP95Ms": 360676,
+            "publicationMaxMs": 360676,
+            "queuedReplyP95Ms": 360676,
+            "queuedReplyMaxMs": 360677
+          },
+          "other": {
+            "questions": 58,
+            "published": 58,
+            "queuedReplies": 58,
+            "publicationP50Ms": 99725,
+            "publicationP95Ms": 299111,
+            "publicationMaxMs": 308134,
+            "queuedReplyP95Ms": 299111,
+            "queuedReplyMaxMs": 308134
+          }
+        },
+        "overallQueuedP50Ms": 266244,
+        "overallQueuedP95Ms": 350555,
+        "nativeP50Ms": 43650,
+        "nativeP95Ms": 50390,
+        "firstPassAdmissionSpanMs": 317610,
+        "intakeP95Ms": 0.42608299999847077,
+        "producerDurationMs": 282151
+      },
+      "counts": {
+        "incidents": 30,
+        "serviceScopes": 24,
+        "groups": 90,
+        "recordEntries": 1078854,
+        "acceptedMessages": 7091,
+        "duplicateDeliveries": 162,
+        "questions": 90,
+        "publishedQuestionJobs": 90,
+        "queuedQuestionReplies": 90,
+        "publishedAssessments": 34,
+        "queuedOutbox": 90,
+        "rollbacks": 0
+      },
+      "jobs": {
+        "total": 7121,
+        "byStatus": {
+          "superseded": 7087,
+          "done": 34
+        }
+      },
+      "payload": {
+        "maxSnapshotBytes": 95558,
+        "maxOriginalRequestBytes": 11841,
+        "inputP50Bytes": 67291,
+        "outputP50Bytes": 6877
+      },
+      "usage": {
+        "input_tokens": 1561133,
+        "cached_input_tokens": 0,
+        "output_tokens": 63061,
+        "reasoning_output_tokens": 3505
+      }
+    },
+    {
+      "label": "shared-question-text",
+      "sourceCommit": "fb9f8594820380c9cfa52acd0532b12db71b9c4b",
+      "reportSha256": "c790d6004f30720bb118b23edf72d23c9d0418f74f0d522a2a7bd4afc0737660",
+      "status": "passed",
+      "inference": {
+        "requestedModel": "gpt-6.1-sol",
+        "effort": "medium",
+        "timeoutMs": 180000,
+        "citationProtocol": "snapshot-alias-v1",
+        "promptHash": "3f22f39def20f568409ce9aa5a97a7a7a68847f9eb38f1638a47fa714418fd4e"
+      },
+      "cliVersion": "0.163.0-alpha.10.2",
+      "concurrency": 4,
+      "freshnessPolicy": {
+        "quietMs": 5000,
+        "maxWaitMs": 60000,
+        "priorityRecoveries": 1
+      },
+      "calls": 36,
+      "validated": 36,
+      "checks": {
+        "boundedConcurrency": true,
+        "peerCapacityExcluded": true,
+        "allBursts": true,
+        "intakeRetained": true,
+        "duplicates": true,
+        "fairFirstPass": true,
+        "quietPublishedDuringFlood": true,
+        "allGroupsServed": true,
+        "requestScope": true,
+        "boundedBatches": true,
+        "allValidatedJudgments": true,
+        "noModelFailures": true,
+        "restart": true,
+        "allJobsDrained": true,
+        "noDeployment": true,
+        "noExternalDelivery": true,
+        "boundedRequestBytes": true,
+        "allQuestionRepliesQueued": true
+      },
+      "latency": {
+        "byCohort": {
+          "busy": {
+            "questions": 32,
+            "published": 32,
+            "queuedReplies": 32,
+            "publicationP50Ms": 341673,
+            "publicationP95Ms": 399943,
+            "publicationMaxMs": 399943,
+            "queuedReplyP95Ms": 399943,
+            "queuedReplyMaxMs": 399943
+          },
+          "other": {
+            "questions": 58,
+            "published": 58,
+            "queuedReplies": 58,
+            "publicationP50Ms": 94358,
+            "publicationP95Ms": 299361,
+            "publicationMaxMs": 305602,
+            "queuedReplyP95Ms": 299361,
+            "queuedReplyMaxMs": 305602
+          }
+        },
+        "overallQueuedP50Ms": 120677,
+        "overallQueuedP95Ms": 389679,
+        "nativeP50Ms": 45270,
+        "nativeP95Ms": 53347,
+        "firstPassAdmissionSpanMs": 360503,
+        "intakeP95Ms": 0.43475000001490116,
+        "producerDurationMs": 282293
+      },
+      "counts": {
+        "incidents": 30,
+        "serviceScopes": 24,
+        "groups": 90,
+        "recordEntries": 1078854,
+        "acceptedMessages": 7091,
+        "duplicateDeliveries": 162,
+        "questions": 90,
+        "publishedQuestionJobs": 90,
+        "queuedQuestionReplies": 90,
+        "publishedAssessments": 34,
+        "queuedOutbox": 90,
+        "rollbacks": 0
+      },
+      "jobs": {
+        "total": 7121,
+        "byStatus": {
+          "superseded": 7087,
+          "done": 34
+        }
+      },
+      "payload": {
+        "maxSnapshotBytes": 95558,
+        "maxOriginalRequestBytes": 11841,
+        "inputP50Bytes": 67815,
+        "outputP50Bytes": 6956
+      },
+      "usage": {
+        "input_tokens": 1252289,
+        "cached_input_tokens": 33920,
+        "output_tokens": 50963,
+        "reasoning_output_tokens": 3026
+      }
+    },
+    {
+      "label": "focused-codex-four",
+      "sourceCommit": "479aab0963ac4f2d7a767e756e0f6d193577da95",
+      "reportSha256": "179bc2679c83ca6973bda078754a6d518409bb2e43bd3767c255bc96dfec79ab",
+      "status": "passed",
+      "inference": {
+        "requestedModel": "gpt-6.1-sol",
+        "effort": "medium",
+        "verbosity": "low",
+        "timeoutMs": 180000,
+        "citationProtocol": "snapshot-alias-v1",
+        "promptHash": "62c6ec4719db6240c6f2c8f9de35d78de43827ac3068cb2acb16509374823d3a"
+      },
+      "cliVersion": "0.163.0-alpha.10.2",
+      "concurrency": 4,
+      "freshnessPolicy": {
+        "quietMs": 5000,
+        "maxWaitMs": 60000,
+        "priorityRecoveries": 1
+      },
+      "calls": 43,
+      "validated": 43,
+      "checks": {
+        "boundedConcurrency": true,
+        "peerCapacityExcluded": true,
+        "allBursts": true,
+        "intakeRetained": true,
+        "duplicates": true,
+        "fairFirstPass": true,
+        "quietPublishedDuringFlood": true,
+        "allGroupsServed": true,
+        "requestScope": true,
+        "boundedBatches": true,
+        "allValidatedJudgments": true,
+        "noModelFailures": true,
+        "restart": true,
+        "allJobsDrained": true,
+        "noDeployment": true,
+        "noExternalDelivery": true,
+        "boundedRequestBytes": true,
+        "allQuestionRepliesQueued": true
+      },
+      "latency": {
+        "byCohort": {
+          "busy": {
+            "questions": 32,
+            "published": 32,
+            "queuedReplies": 32,
+            "publicationP50Ms": 317263,
+            "publicationP95Ms": 375071,
+            "publicationMaxMs": 375072,
+            "queuedReplyP95Ms": 375072,
+            "queuedReplyMaxMs": 375073
+          },
+          "other": {
+            "questions": 58,
+            "published": 58,
+            "queuedReplies": 58,
+            "publicationP50Ms": 104151,
+            "publicationP95Ms": 323474,
+            "publicationMaxMs": 332736,
+            "queuedReplyP95Ms": 323475,
+            "queuedReplyMaxMs": 332736
+          }
+        },
+        "overallQueuedP50Ms": 276045,
+        "overallQueuedP95Ms": 365266,
+        "nativeP50Ms": 44222,
+        "nativeP95Ms": 51542,
+        "firstPassAdmissionSpanMs": 329582,
+        "intakeP95Ms": 0.45991700000013225,
+        "producerDurationMs": 281832
+      },
+      "counts": {
+        "incidents": 30,
+        "serviceScopes": 24,
+        "groups": 90,
+        "recordEntries": 1078854,
+        "acceptedMessages": 7091,
+        "duplicateDeliveries": 162,
+        "questions": 90,
+        "publishedQuestionJobs": 90,
+        "queuedQuestionReplies": 90,
+        "publishedAssessments": 34,
+        "queuedOutbox": 90,
+        "rollbacks": 0
+      },
+      "jobs": {
+        "total": 7121,
+        "byStatus": {
+          "superseded": 7087,
+          "done": 34
+        }
+      },
+      "payload": {
+        "maxSnapshotBytes": 95558,
+        "maxOriginalRequestBytes": 11841,
+        "inputP50Bytes": 66950,
+        "outputP50Bytes": 6940
+      },
+      "usage": {
+        "input_tokens": 1316852,
+        "cached_input_tokens": 0,
+        "output_tokens": 60868,
+        "reasoning_output_tokens": 3147
+      }
+    },
+    {
+      "label": "eight-slot-one-minute",
+      "sourceCommit": "c5635573cc68085e5d3081763d3434c0c612c8e3",
+      "reportSha256": "29100b50f41aa457318c097cca62f508c86c227414a37fdedda049e2395a0b66",
+      "status": "passed",
+      "inference": {
+        "requestedModel": "gpt-6.1-sol",
+        "effort": "medium",
+        "verbosity": "low",
+        "timeoutMs": 180000,
+        "citationProtocol": "snapshot-alias-v1",
+        "promptHash": "62c6ec4719db6240c6f2c8f9de35d78de43827ac3068cb2acb16509374823d3a"
+      },
+      "cliVersion": "0.163.0-alpha.10.2",
+      "concurrency": 8,
+      "freshnessPolicy": {
+        "quietMs": 5000,
+        "maxWaitMs": 60000,
+        "priorityRecoveries": 1
+      },
+      "calls": 59,
+      "validated": 59,
+      "checks": {
+        "boundedConcurrency": true,
+        "peerCapacityExcluded": true,
+        "allBursts": true,
+        "intakeRetained": true,
+        "duplicates": true,
+        "fairFirstPass": true,
+        "quietPublishedDuringFlood": true,
+        "allGroupsServed": true,
+        "requestScope": true,
+        "boundedBatches": true,
+        "allValidatedJudgments": true,
+        "noModelFailures": true,
+        "restart": true,
+        "allJobsDrained": true,
+        "noDeployment": true,
+        "noExternalDelivery": true,
+        "boundedRequestBytes": true,
+        "allQuestionRepliesQueued": true
+      },
+      "latency": {
+        "byCohort": {
+          "busy": {
+            "questions": 32,
+            "published": 32,
+            "queuedReplies": 32,
+            "publicationP50Ms": 325981,
+            "publicationP95Ms": 378668,
+            "publicationMaxMs": 378669,
+            "queuedReplyP95Ms": 378668,
+            "queuedReplyMaxMs": 378669
+          },
+          "other": {
+            "questions": 58,
+            "published": 58,
+            "queuedReplies": 58,
+            "publicationP50Ms": 73139,
+            "publicationP95Ms": 139212,
+            "publicationMaxMs": 146953,
+            "queuedReplyP95Ms": 139213,
+            "queuedReplyMaxMs": 146953
+          }
+        },
+        "overallQueuedP50Ms": 93350,
+        "overallQueuedP95Ms": 373979,
+        "nativeP50Ms": 43814,
+        "nativeP95Ms": 52178,
+        "firstPassAdmissionSpanMs": 149876,
+        "intakeP95Ms": 0.4291250000023865,
+        "producerDurationMs": 276722
+      },
+      "counts": {
+        "incidents": 30,
+        "serviceScopes": 24,
+        "groups": 90,
+        "recordEntries": 1078854,
+        "acceptedMessages": 7091,
+        "duplicateDeliveries": 162,
+        "questions": 90,
+        "publishedQuestionJobs": 90,
+        "queuedQuestionReplies": 90,
+        "publishedAssessments": 51,
+        "queuedOutbox": 90,
+        "rollbacks": 0
+      },
+      "jobs": {
+        "total": 7121,
+        "byStatus": {
+          "superseded": 7070,
+          "done": 51
+        }
+      },
+      "payload": {
+        "maxSnapshotBytes": 95558,
+        "maxOriginalRequestBytes": 11841,
+        "inputP50Bytes": 68237,
+        "outputP50Bytes": 6910
+      },
+      "usage": {
+        "input_tokens": 1839541,
+        "cached_input_tokens": 0,
+        "output_tokens": 82930,
+        "reasoning_output_tokens": 4027
+      }
+    },
+    {
+      "label": "eight-slot-two-minute",
+      "sourceCommit": "7c66e1e05a8a89da88d8829f8e3e6ed945b34dcf",
+      "reportSha256": "da0c3a92811d277bda51376795e72eb319c5b92d7d5f53c75cf0eb70a0e89ab7",
+      "status": "passed",
+      "inference": {
+        "requestedModel": "gpt-6.1-sol",
+        "effort": "medium",
+        "verbosity": "low",
+        "timeoutMs": 180000,
+        "citationProtocol": "snapshot-alias-v1",
+        "promptHash": "62c6ec4719db6240c6f2c8f9de35d78de43827ac3068cb2acb16509374823d3a"
+      },
+      "cliVersion": "0.163.0-alpha.10.2",
+      "concurrency": 8,
+      "freshnessPolicy": {
+        "quietMs": 5000,
+        "maxWaitMs": 120000,
+        "priorityRecoveries": 1
+      },
+      "calls": 55,
+      "validated": 55,
+      "checks": {
+        "boundedConcurrency": true,
+        "peerCapacityExcluded": true,
+        "allBursts": true,
+        "intakeRetained": true,
+        "duplicates": true,
+        "fairFirstPass": true,
+        "quietPublishedDuringFlood": true,
+        "allGroupsServed": true,
+        "requestScope": true,
+        "boundedBatches": true,
+        "allValidatedJudgments": true,
+        "noModelFailures": true,
+        "restart": true,
+        "allJobsDrained": true,
+        "noDeployment": true,
+        "noExternalDelivery": true,
+        "boundedRequestBytes": true,
+        "allQuestionRepliesQueued": true
+      },
+      "latency": {
+        "byCohort": {
+          "busy": {
+            "questions": 32,
+            "published": 32,
+            "queuedReplies": 32,
+            "publicationP50Ms": 319000,
+            "publicationP95Ms": 371447,
+            "publicationMaxMs": 371447,
+            "queuedReplyP95Ms": 371447,
+            "queuedReplyMaxMs": 371448
+          },
+          "other": {
+            "questions": 58,
+            "published": 58,
+            "queuedReplies": 58,
+            "publicationP50Ms": 73930,
+            "publicationP95Ms": 106468,
+            "publicationMaxMs": 117672,
+            "queuedReplyP95Ms": 106468,
+            "queuedReplyMaxMs": 117672
+          }
+        },
+        "overallQueuedP50Ms": 87644,
+        "overallQueuedP95Ms": 367000,
+        "nativeP50Ms": 44989,
+        "nativeP95Ms": 54389,
+        "firstPassAdmissionSpanMs": 147628,
+        "intakeP95Ms": 0.4273749999993015,
+        "producerDurationMs": 276482
+      },
+      "counts": {
+        "incidents": 30,
+        "serviceScopes": 24,
+        "groups": 90,
+        "recordEntries": 1078854,
+        "acceptedMessages": 7091,
+        "duplicateDeliveries": 162,
+        "questions": 90,
+        "publishedQuestionJobs": 90,
+        "queuedQuestionReplies": 90,
+        "publishedAssessments": 51,
+        "queuedOutbox": 90,
+        "rollbacks": 0
+      },
+      "jobs": {
+        "total": 7121,
+        "byStatus": {
+          "superseded": 7070,
+          "done": 51
+        }
+      },
+      "payload": {
+        "maxSnapshotBytes": 95558,
+        "maxOriginalRequestBytes": 11841,
+        "inputP50Bytes": 68086,
+        "outputP50Bytes": 6989
+      },
+      "usage": {
+        "input_tokens": 1699845,
+        "cached_input_tokens": 0,
+        "output_tokens": 76762,
+        "reasoning_output_tokens": 3647
+      }
+    }
+  ],
+  "sourcePreflights": [
+    {
+      "sourceCommit": "fb9f8594820380c9cfa52acd0532b12db71b9c4b",
+      "reportSha256": "7da27138e7004c3eb3c5217b32cbc1cc27abadd49d6eb4f039cd58dd270dfe9b",
+      "status": "passed",
+      "records": 10000,
+      "usefulPercent": 1,
+      "elapsedMs": 34884,
+      "remediation": "forward-fix",
+      "checks": {
+        "published": true,
+        "actualModel": true,
+        "rareRawRetained": true,
+        "numberedSource": true,
+        "exactProject": true,
+        "exactSha": true,
+        "exactLine": true,
+        "exactQuote": true,
+        "logProvenance": true,
+        "noUnsupportedDeployment": true,
+        "noUnsupportedRollback": true,
+        "issueSpec": true,
+        "boundedSnapshot": true,
+        "noExternalActions": true
+      }
+    },
+    {
+      "sourceCommit": "479aab0963ac4f2d7a767e756e0f6d193577da95",
+      "reportSha256": "267df76a33d04b4482ec27f31a716299aad6e308e0b7ad450a59565562a7a03d",
+      "status": "passed",
+      "records": 10000,
+      "usefulPercent": 1,
+      "elapsedMs": 50534,
+      "remediation": "collect-evidence",
+      "checks": {
+        "published": true,
+        "actualModel": true,
+        "rareRawRetained": true,
+        "numberedSource": true,
+        "exactProject": true,
+        "exactSha": true,
+        "exactLine": true,
+        "exactQuote": true,
+        "logProvenance": true,
+        "noUnsupportedDeployment": true,
+        "noUnsupportedRollback": true,
+        "issueSpec": true,
+        "boundedSnapshot": true,
+        "noExternalActions": true
+      }
+    }
+  ],
+  "completedResume": {
+    "status": "passed",
+    "callsBefore": 55,
+    "callsAfter": 55,
+    "nativeCallsAdded": 0,
+    "checks": {
+      "boundedConcurrency": true,
+      "peerCapacityExcluded": true,
+      "allBursts": true,
+      "intakeRetained": true,
+      "duplicates": true,
+      "fairFirstPass": true,
+      "quietPublishedDuringFlood": true,
+      "allGroupsServed": true,
+      "requestScope": true,
+      "boundedBatches": true,
+      "allValidatedJudgments": true,
+      "noModelFailures": true,
+      "restart": true,
+      "allJobsDrained": true,
+      "noDeployment": true,
+      "noExternalDelivery": true,
+      "boundedRequestBytes": true,
+      "allQuestionRepliesQueued": true
+    },
+    "metricsUnchanged": true,
+    "casesUnchanged": true,
+    "completedReportSha256": "32d1848e55a6065615e00189020e7fcd2f7fed58e8b88dee90152a9503dca8f7"
+  }
+}

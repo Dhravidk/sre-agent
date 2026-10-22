@@ -16,6 +16,8 @@ The canonical [ticket packet](JIRA-TICKETS.md) records broader proposed delivery
 
 The [October 22 consolidation record](DYNATRACE-CONSOLIDATION.md) separates the paused checkpoint, merged-main baseline, combined checks and real-model development results from live integration acceptance.
 
+The [latency follow-up](DYNATRACE-LATENCY.md) records repeated actual-Codex surge runs and the explicit capacity experiment. Up to eight SQL-fenced investigators can now be configured; defaults remain one, or four in the development profile. Stop workers before changing capacity and validate concurrent CLI/resource usage on the approved route. This does not establish live Dynatrace/GitLab access or Claude performance while its account remains capped.
+
 ## External evidence sources
 
 The future collaboration prototype's saved-QA reader separates recorded execution state from the current assessment match, including same-revision reassessments. It shares the action guard's reviewed-facts fingerprint, preserves original result/event rows, and marks legacy or bounded/unavailable comparisons unverified. This local behavior does not accept an Ally QA executor, native Teams workflow or production fix. Verify representative enterprise assessment sizes and operator interpretation before using those history labels operationally; see [the contract](QA-EXECUTION.md).
