@@ -6,7 +6,7 @@ Run this explicitly with the approved/authenticated Claude installation:
 pnpm sre:groups:eval --live
 ```
 
-This consumes actual Claude usage through the restricted CLI, `IncidentWorker`, four database-coordinated slots and durable SQLite jobs. Each incident remains exclusive. Inputs use authored Dynatrace, GitLab, Jira/Confluence and deployment contracts. Group events enter the admitted-room/store boundary directly. There is no Teams network/authentication exercise, HTTP capacity measurement, live vendor query, outbound sender or deployment writer in this workload. Use `--concurrency 1` through `--concurrency 4` to select the bounded capacity before creating a fresh evaluation directory.
+This consumes actual Claude usage through the restricted CLI, `IncidentWorker`, four database-coordinated slots by default and durable SQLite jobs. Each incident remains exclusive. Inputs use authored Dynatrace, GitLab, Jira/Confluence and deployment contracts. Group events enter the admitted-room/store boundary directly. There is no Teams network/authentication exercise, HTTP capacity measurement, live vendor query, outbound sender or deployment writer in this workload. Use `--concurrency 1` through `--concurrency 8` to select the bounded capacity before creating a fresh evaluation directory.
 
 ## Explicit local Codex alternative
 

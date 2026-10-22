@@ -12,6 +12,7 @@ import {issueSpecMarkdown,remediationText} from '../../src/sre/agent-investigati
 import {hash} from '../../src/sre/security.mjs';
 import {questionBatchLimits,requestBatchBytes} from '../../src/sre/question-batch-budget.mjs';
 import {requestFreshnessLimits} from '../../src/sre/request-freshness.mjs';
+import {investigatorSlots} from '../../src/sre/investigation-scheduler.mjs';
 import {fixtureIncidentConnectors} from '../../fixtures/messy-dynatrace-incidents.mjs';
 import {sustainedGroupSuite} from '../../fixtures/sustained-group-incidents.mjs';
 import {seedMessyIncidents,scoreMessyAssessment} from './multi-incident-evaluation.mjs';
@@ -23,7 +24,7 @@ const stem=a=>String(a.number).padStart(3,'0')+'-'+a.case;
 export async function runConcurrentGroupEvaluation({directory,seed=91573,recordsPerService=30000,concurrency=4,burstIntervalMs=4000,hotUpdates,maxTurns=100,expanded,surge,reasoner=new ClaudeReasoner(),onEvent=()=>{}}){
   if(surge&&expanded)throw Error('Choose one workload profile');
   hotUpdates??=surge?96:64;
-  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4||!Number.isInteger(burstIntervalMs)||burstIntervalMs<1||burstIntervalMs>10000||!Number.isInteger(hotUpdates)||hotUpdates<1||hotUpdates>256)throw Error('Invalid concurrent evaluation budget');
+  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>investigatorSlots.length||!Number.isInteger(burstIntervalMs)||burstIntervalMs<1||burstIntervalMs>10000||!Number.isInteger(hotUpdates)||hotUpdates<1||hotUpdates>256)throw Error('Invalid concurrent evaluation budget');
   await mkdir(join(directory,'attempts'),{recursive:true,mode:0o700});
   const read=async name=>{try{return JSON.parse(await readFile(join(directory,name),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;return null;}};
   const model=reasoner instanceof ClaudeReasoner?'actual-claude':reasoner instanceof CodexEvaluationReasoner?'actual-codex':'test-double',reasonerMode=reasoner.mode;

@@ -25,6 +25,27 @@ async function seed(store,n=8){
 async function finish(store,job){return store.finish(job,analysis,null,Number((await store.context(job.incident_id)).incident.revision));}
 
 for(const dialect of ['sqlite','postgres']){
+  test(dialect+': eight database slots exclude a ninth owner and higher-slot expiry still fences publication and capacity changes',async()=>{
+    const db=await database(dialect),options={investigationConcurrency:8,questionBatchLimit:32},store=await new SreStore(db,options).initialize();let now=await store.coordinationNow();store.coordinationNow=async()=>now;
+    const open=async concurrency=>{const other=new SreStore(db,{...options,investigationConcurrency:concurrency});other.coordinationNow=async()=>now;return other.initialize();};
+    try{
+      await seed(store,9);const jobs=(await Promise.all(Array.from({length:9},(_,n)=>store.claim('eight-'+n,1000)))).filter(Boolean);
+      assert.equal(jobs.length,8);assert.equal(new Set(jobs.map(j=>j.incident_id)).size,8);assert.equal(new Set(jobs.map(j=>j.lease_name)).size,8);
+      const high=jobs.find(j=>j.lease_name==='agent-slot:7');assert.ok(high);const peer=await open(8);assert.equal(await peer.claim('ninth'),null);
+      for(const job of jobs.filter(j=>j!==high))await finish(store,job);
+      // An orphaned upper-slot lease must also prevent a capacity change.
+      await db.query("UPDATE sre_jobs SET status='pending' WHERE id=?",[high.id]);
+      await assert.rejects(()=>open(4),/Stop active investigators/);
+      await db.query("UPDATE sre_jobs SET status='running' WHERE id=?",[high.id]);now+=1001;
+      const replacement=await store.claim('replacement',1000);assert.equal(replacement.id,high.id);
+      await assert.rejects(()=>store.heartbeat(high.lease_owner,high.id,1000,high.lease_name),/lease lost/);
+      await assert.rejects(()=>store.setRemoteState(high.incident_id,{bad:true},high),/lease lost/);
+      await assert.rejects(()=>finish(store,high),/lease lost/);await store.fail(high,new ModelQuotaError('codex-cli'));assert.equal(await store.modelQuota(),null);
+      await finish(store,replacement);const smaller=await open(4);
+      await assert.rejects(()=>store.claim('old-capacity'),/concurrency changed/);assert.ok(await smaller.claim('current-capacity'));
+    }finally{await db.close();}
+  });
+
   test(dialect+': database slots bound concurrent owners and keep each incident exclusive across restart',async()=>{
     const services=[{key:'service',environment:'evaluation',teams:{tenantId:'evaluation',conversations:['hot']}}],options={questionBatchLimit:8,investigationConcurrency:4,services},db=await database(dialect),store=await new SreStore(db,options).initialize();
     try{
@@ -124,8 +145,9 @@ test('a slow incident does not prevent an idle slot serving a newly arrived quie
 });
 
 test('concurrency config rejects invalid/unbounded values and offline rules parallelism',()=>{
-  const base=loadConfig({});for(const value of [0,5,1.5,'4',NaN])assert.throws(()=>validateConfig({...base,investigationConcurrency:value},{}),/concurrency/);
+  const base=loadConfig({});for(const value of [0,9,1.5,'4',NaN])assert.throws(()=>validateConfig({...base,investigationConcurrency:value},{}),/concurrency/);
   assert.throws(()=>validateConfig({...base,investigationConcurrency:2},{}),/Claude mode/);
+  assert.equal(validateConfig({...base,mode:'trial',agentMode:'claude',investigationConcurrency:8},{}).investigationConcurrency,8);
 });
 
 test('runtime ticks refill idle capacity while an earlier incident remains in the model',async()=>{

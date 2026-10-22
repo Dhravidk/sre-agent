@@ -1,6 +1,6 @@
 # Dispatch design for review
 
-Status: **proposal, not implemented**. This document does not deploy AWS resources. The existing runtime keeps one durable session per incident and a relational inbox/outbox. It now supports a separately configured database-wide bound of one to four investigators, with one active job per incident and durable slot/job fencing. That bounded pool and the local QA fixture workflow do not implement the broader dispatcher, tenant budgets or specialist architecture proposed here.
+Status: **proposal, not implemented**. This document does not deploy AWS resources. The existing runtime keeps one durable session per incident and a relational inbox/outbox. It now supports a separately configured database-wide bound of one to eight investigators, with one active job per incident and durable slot/job fencing. That bounded pool and the local QA fixture workflow do not implement the broader dispatcher, tenant budgets or specialist architecture proposed here.
 
 ## Decision in brief
 
