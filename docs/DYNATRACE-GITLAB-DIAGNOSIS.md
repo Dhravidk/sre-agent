@@ -67,7 +67,7 @@ Location checks matched the scoped project/revision source, and the Markdown pla
 
 Earlier runs are retained in the [sanitized receipts](evidence/2026-10-22-dynatrace-gitlab-diagnosis.json): an initial harness counter error; duplicate scheduling that prevented a complete six-case pass; and a real-model run whose recovery choices were correct but whose dependency/healthy controls still appeared in candidate finding arrays. The final instruction change reserves those arrays for implicated mechanisms and leaves controls in citations. The same scorer was retained. An optional window-only ablation timed out before an assessment at its 180-second deadline; it supplies no accuracy or latency comparison.
 
-The final 6/6 result is a development gate on cases used during implementation, not an independent diagnostic accuracy estimate. These cases use one application module per scoped project; larger-repository localization and real telemetry remain outstanding.
+The final 6/6 result is a development gate on cases used during implementation, not an independent diagnostic accuracy estimate. These cases use one application module per scoped project. The subsequent [larger-repository evaluation](DYNATRACE-LARGE-REPOSITORIES.md) adds separate authored calibration/validation mechanisms and multi-file Git histories; real telemetry and enterprise source acceptance remain outstanding.
 
 ## Remaining live checks
 

@@ -33,6 +33,8 @@ export class IncidentWorker {
     const service=this.services.find(x=>x.key===context.incident.service_key);
     const clients=this.connectors.get(service.key)||{};
     const modelBacked=['claude','codex'].includes(this.reasoner?.mode);let priorityReferences=[];
+    const previousReservation=sourceBudget.initialReservation;
+    if(modelBacked&&service.investigation?.followUp?.enabled===true)sourceBudget.initialReservation={reads:2+(previousReservation?.reads??0),bytes:32000+(previousReservation?.bytes??0)};
     const fixed=provider=>clients[provider]&&(provider!=='gitlab'||Boolean(service.gitlab?.project));
     const sourceProof=async(parameters)=>{
       const original=parameters.client;
@@ -140,7 +142,11 @@ export class IncidentWorker {
       for(const key of keys)await collect('jira','ticket',()=>clients.jira.issue(key,{signal}));
     }
     }catch(error){collectionAbort.abort(error);throw error;}
-    finally{await Promise.all(tasks);}
+    finally{
+      // Drain every collector before releasing its reservation, including after
+      // cancellation/fence failure. Consumed attempts/bytes are never restored.
+      try{await Promise.all(tasks);}finally{if(previousReservation===undefined)delete sourceBudget.initialReservation;else sourceBudget.initialReservation=previousReservation;}
+    }
   }
   async runOnce() {
     if(this.running||this.closed)return false;

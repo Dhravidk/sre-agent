@@ -35,9 +35,11 @@ export async function readImmutableSource(path,revision,{service,client,budget=s
  const scope=sourceScopeForService(service);if(!scope?.project||!sourceTextPath(path)||!sha(revision))throw Error('An explicitly scoped immutable text source is required');
  if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');
  const key=JSON.stringify([service.key,service.tenant,service.environment,service.gitlab.base,scope.project,path,revision]);budget.files??=new Map();
- // Optional history must leave pending primary file requests their shared budget.
+ // Initial collection leaves capacity for model-directed follow-ups; optional
+ // history also leaves pending primary files their portion of that same budget.
  // A deferred optional read is not cached as a failed primary file response.
- if(!budget.files.has(key)&&(reserveReads>0||reserveBytes>0)&&(budget.reads<=reserveReads||budget.bytes<=reserveBytes))return{state:'unavailable',path,sha:revision,error:'Shared source budget reserved for pending primary file requests'};
+ reserveReads+=budget.initialReservation?.reads??0;reserveBytes+=budget.initialReservation?.bytes??0;
+ if(!budget.files.has(key)&&(reserveReads>0||reserveBytes>0)&&(budget.reads<=reserveReads||budget.bytes<=reserveBytes))return{state:'unavailable',path,sha:revision,error:'Shared source budget reserved for follow-up or pending primary file requests'};
  if(!budget.files.has(key)){
   // Reserve before awaiting so every source collector shares the same promise.
   const pending=(async()=>{

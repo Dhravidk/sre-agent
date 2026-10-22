@@ -20,6 +20,8 @@ The [latency follow-up](DYNATRACE-LATENCY.md) records repeated actual-Codex surg
 
 The [first diagnosis milestone](DYNATRACE-GITLAB-DIAGNOSIS.md#observed-development-result-october-22-2026) passed 2,557 local tests and six authored real-Codex cases with targeted follow-ups and rollback/fix controls. Dependency/healthy source references remain citations rather than candidate defects. [Sanitized receipts](evidence/2026-10-22-dynatrace-gitlab-diagnosis.json) retain earlier failures and the timed-out window-only control; no paired speed or live vendor acceptance is claimed.
 
+The [larger-repository follow-up](DYNATRACE-LARGE-REPOSITORIES.md) addresses initial source-budget exhaustion and separates two authored calibration mechanisms from five validation mechanisms in 1,200-file Git histories. Tenant DQL/auth/field/completeness, GitLab permissions/runtime bindings and independent real-incident acceptance remain outstanding; Teams and ticket-connector work stay deferred.
+
 ## External evidence sources
 
 The future collaboration prototype's saved-QA reader separates recorded execution state from the current assessment match, including same-revision reassessments. It shares the action guard's reviewed-facts fingerprint, preserves original result/event rows, and marks legacy or bounded/unavailable comparisons unverified. This local behavior does not accept an Ally QA executor, native Teams workflow or production fix. Verify representative enterprise assessment sizes and operator interpretation before using those history labels operationally; see [the contract](QA-EXECUTION.md).
