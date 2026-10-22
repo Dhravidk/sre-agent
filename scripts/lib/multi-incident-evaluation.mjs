@@ -31,7 +31,7 @@ export async function runMultiIncidentEvaluation({directory,seed=73421,recordsPe
   const metadataPath=join(directory,'fixture.json');let parameters;
   try{parameters=JSON.parse(await readFile(metadataPath,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;parameters={seed,recordsPerService,now:Date.now(),caseIds:caseIds||null};await writeFile(metadataPath,JSON.stringify(parameters,null,2)+'\n',{mode:0o600});}
   const suite=messyIncidentSuite(parameters),selected=suite.cases.filter(c=>!parameters.caseIds||parameters.caseIds.includes(c.id));if(!selected.length)throw Error('No selected messy incident cases');
-  const path=join(directory,'state.sqlite'),open=async()=>new SreStore(sqliteDatabase(path),{services:suite.services,questionBatchLimit:8}).initialize();let store=await open(),worker;
+  const path=join(directory,'state.sqlite'),open=async()=>new SreStore(sqliteDatabase(path),{services:suite.services,questionBatchLimit:8,freshnessRetries:false}).initialize();let store=await open(),worker;
   const ids=await seedMessyIncidents(store,suite,selected),byId=new Map(selected.map(c=>[ids[c.id],c]));
   let previous;try{previous=JSON.parse(await readFile(join(directory,'report.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
   let active=0,maxActive=previous?.checks?.singleClaudeCall?1:0,burstInjected=!!(await store.checkpoint('evaluation:question-burst')),peerDenied=previous?.checks?.peerLeaseBlocked===true,restarted=!!(await store.checkpoint('evaluation:restarted')),successes=0;

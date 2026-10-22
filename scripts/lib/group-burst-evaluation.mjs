@@ -28,7 +28,7 @@ export async function runGroupBurstEvaluation({directory,seed=91573,recordsPerSe
   if(parameters.workloadVersion!==3)throw Error('This evaluation directory uses an earlier workload contract. Preserve it and choose a fresh directory for version 3.');
   if(parameters.executionModel!==model||parameters.reasonerMode!==reasonerMode)throw Error('An evaluation directory cannot change model providers or replace a test double with a live model. Choose a fresh directory.');
   ({producerTurns,burstOffsets,hotUpdates}=parameters);
-  const suite=sustainedGroupSuite(parameters),open=async()=>new SreStore(sqliteDatabase(join(directory,'state.sqlite')),{services:suite.services,questionBatchLimit:8}).initialize();
+  const suite=sustainedGroupSuite(parameters),open=async()=>new SreStore(sqliteDatabase(join(directory,'state.sqlite')),{services:suite.services,questionBatchLimit:8,freshnessRetries:false}).initialize();
   let store=await open(),worker;
   const ids=await seedMessyIncidents(store,suite),byIncident=new Map(suite.cases.map(c=>[ids[c.id],c]));
   for(const group of suite.groups){

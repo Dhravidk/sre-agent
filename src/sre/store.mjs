@@ -1,4 +1,5 @@
 import {batchQuestions} from './question-batch.mjs';
+import {requestSchedule,extendRequestFreshness,claimRequestFreshness,requeueStaleRequest,freshnessClaimSql} from './request-freshness.mjs';
 import {queueModelMessages} from './model-notices.mjs';
 import {investigatorLimit,investigatorSlots,investigatorLeaseName,lockInvestigationScheduler,configureInvestigationScheduler,assertInvestigationScheduler} from './investigation-scheduler.mjs';
 import {ModelQuotaError,modelQuota,holdModelQuota,quotaBlocksClaim,resumeModelQuota} from './model-quota.mjs';
@@ -41,7 +42,7 @@ const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypot
 export const conversationKey = (tenant, id) => hash([tenant, id]).slice(0, 32);
 
 export class SreStore {
-  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1, investigationConcurrency = 1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>questionBatchLimits.requests)throw Error('Invalid question batch limit');this.questionBatchLimit=questionBatchLimit;this.investigationConcurrency=investigatorLimit(investigationConcurrency); }
+  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1, investigationConcurrency = 1, freshnessRetries = questionBatchLimit>1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>questionBatchLimits.requests)throw Error('Invalid question batch limit');if(typeof freshnessRetries!=='boolean')throw Error('Invalid request freshness policy');this.questionBatchLimit=questionBatchLimit;this.freshnessRetries=freshnessRetries&&questionBatchLimit>1;this.investigationConcurrency=investigatorLimit(investigationConcurrency); }
   async coordinationNow(query=this.db.query) {
     // PostgreSQL coordinates independent hosts. Its transaction-start timestamp
     // would remain stale across a lock wait, so read the live server clock.
@@ -262,6 +263,7 @@ export class SreStore {
         await q(`INSERT INTO sre_evidence(id,incident_id,source,kind,observed_at,content) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`, [hash([id,incident.id]),incident.id,event.source,kind,event.at,json(content)]);
         await this.projectResponder({id:hash([id,incident.id]),incident_id:incident.id,source:event.source,kind:event.kind,content:event.payload||event},q,event.conversationKey);
         await q(`INSERT INTO sre_jobs(id,incident_id,payload,status,attempts,next_at,created_at) VALUES(?,?,?,'pending',0,?,?) ON CONFLICT DO NOTHING`, [hash(['investigate',id,incident.id]),incident.id,json({ eventId:id, question:event.kind === 'question' ? event.payload?.text : null, conversationKey:event.conversationKey || null,...(alertBinding?.joined?{replyConversationKey:alertBinding.conversationKey}:{}) }),receivedAt,receivedAt]);
+        if(this.freshnessRetries)await extendRequestFreshness(q,incident.id,receivedAt);
       }
       await finishChangeRead(this,q,readBoundary,event,id);
       return { eventId:id, incidentId:incidents[0]?.id || null, queued:incidents.length, duplicate:false };
@@ -346,9 +348,13 @@ export class SreStore {
       // another update-only turn for that incident. The current evidence is
       // collected either way; eligible updates can share the question's turn.
       const eligible="((j.status='pending' AND j.next_at<=?) OR (j.status='running' AND j.lease_until<=?)) AND NOT EXISTS(SELECT 1 FROM sre_jobs active WHERE active.incident_id=j.incident_id AND active.status='running' AND active.lease_until>?)";
-      const fairSql="SELECT j.* FROM sre_jobs j LEFT JOIN sre_checkpoints f ON f.id='agent-scheduled:'||j.incident_id WHERE "+eligible+" ORDER BY CASE WHEN j.status='running' THEN 0 ELSE 1 END,COALESCE(f.updated_at,0),CASE WHEN COALESCE("+questionField+",'')<>'' THEN 0 ELSE 1 END,CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1"+(this.db.dialect==='postgres'?' FOR UPDATE OF j SKIP LOCKED':'');
-      const [job] = await q(this.questionBatchLimit>1?fairSql:`SELECT j.* FROM sre_jobs j WHERE ${eligible} ORDER BY CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1` + (this.db.dialect === 'postgres' ? ' FOR UPDATE OF j SKIP LOCKED' : ''), [readyAt,readyAt,readyAt]);
+      const freshness=this.freshnessRetries?freshnessClaimSql(this.db.dialect):{join:'',eligible:'',parentOrder:''};
+      const fairSql="SELECT j.*,f.updated_at AS last_scheduled_at FROM sre_jobs j LEFT JOIN sre_checkpoints f ON f.id='agent-scheduled:'||j.incident_id"+freshness.join+" WHERE "+eligible+freshness.eligible+" ORDER BY CASE WHEN j.status='running' THEN 0 ELSE 1 END,COALESCE(f.updated_at,0),"+freshness.parentOrder+"CASE WHEN COALESCE("+questionField+",'')<>'' THEN 0 ELSE 1 END,CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1"+(this.db.dialect==='postgres'?' FOR UPDATE OF j SKIP LOCKED':'');
+      const [job] = await q(this.questionBatchLimit>1?fairSql:`SELECT j.* FROM sre_jobs j WHERE ${eligible} ORDER BY CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1` + (this.db.dialect === 'postgres' ? ' FOR UPDATE OF j SKIP LOCKED' : ''), [readyAt,readyAt,readyAt,...(this.freshnessRetries?[readyAt]:[])]);
       if (!job) {if(this.investigationConcurrency>1)await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[leaseName,owner]);return null;}
+      if(this.freshnessRetries&&!await claimRequestFreshness(q,job.incident_id,await this.coordinationNow(q),this.db.dialect)){
+        if(this.investigationConcurrency>1)await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[leaseName,owner]);return null;
+      }
       if(this.questionBatchLimit>1)await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-scheduled:'+job.incident_id,json({jobId:job.id}),readyAt]);
       let payload=await batchQuestions(q,job,parse(job.payload),this.questionBatchLimit,{dialect:this.db.dialect,now:readyAt});
       if(!payload.question||this.questionBatchLimit>1) {
@@ -367,9 +373,10 @@ export class SreStore {
           delete payload.replyConversationKey;
         }
       }
+      const scheduling=this.freshnessRetries&&(payload.question||requiredReplyKeys(payload).length)?await requestSchedule(q,job,job.last_scheduled_at,readyAt):null;
       await q("UPDATE sre_jobs SET status='running',payload=?,attempts=attempts+1,lease_owner=?,lease_until=? WHERE id=?", [json(payload),owner,now+leaseMs,job.id]);
       if(Number(lease[0].expires_at)<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the claim');
-      return {...job,attempts:Number(job.attempts)+1,payload,lease_owner:owner,lease_until:now+leaseMs,lease_name:leaseName};
+      return {...job,attempts:Number(job.attempts)+1,payload,scheduling,lease_owner:owner,lease_until:now+leaseMs,lease_name:leaseName};
     });
   }
   async heartbeat(owner, jobId, leaseMs = 60000, leaseName = 'single-agent') {
@@ -415,7 +422,11 @@ export class SreStore {
       if(expectedRevision!==undefined && Number(prior.revision)!==expectedRevision) {
         await q("UPDATE sre_jobs SET status='superseded' WHERE id=?",[job.id]);
         // Questions and all coalesced reply destinations survive fresh telemetry.
-        if(job.payload.question||requiredReplyKeys(job.payload).length)await q("UPDATE sre_jobs SET status='pending',next_at=? WHERE id=?",[await this.coordinationNow(q),job.id]);
+        if(job.payload.question||requiredReplyKeys(job.payload).length){
+          const now=await this.coordinationNow(q);
+          if(this.freshnessRetries)await requeueStaleRequest(q,job,now);
+          else await q("UPDATE sre_jobs SET status='pending',next_at=? WHERE id=?",[now,job.id]);
+        }
         if(remoteState)await q('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?',[json(remoteState),job.incident_id]);
         if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the superseded result');
         if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the superseded result');}

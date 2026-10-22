@@ -66,8 +66,15 @@ test('older workload directories cannot silently change their pinned evidence co
   }finally{await rm(directory,{recursive:true,force:true});}
 });
 
-for(const {concurrent,expanded}of [{concurrent:false,expanded:false},{concurrent:true,expanded:false},{concurrent:true,expanded:true}])test((expanded?'expanded ':'' )+(concurrent?'concurrent':'serial')+' sustained evaluator drains real worker jobs across groups and preserves restart/resume (test-double reasoning)',async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'sre-group-burst-')),suite=sustainedGroupSuite({recordsPerService:6000,...(expanded?{cohorts:4,hotRooms:26,messiness:'saturated'}:{})});let calls=0;
+test('surge noise preserves useful witnesses while adding 90 groups across 30 incidents',()=>{
+ const p={recordsPerService:6000,now:Date.now(),cohorts:6,hotRooms:32},before=sustainedGroupSuite({...p,messiness:'saturated'}),after=sustainedGroupSuite({...p,messiness:'turbulent'});
+ assert.equal(after.groups.length,90);assert.equal(after.cases.length,30);assert.equal(after.services.length,24);assert.deepEqual(after.cases,before.cases);
+ const useful=profile=>profile.records.filter(r=>!['/health','/validation-probe','/readiness'].includes(r['http.route']));
+ for(const [key,profile]of after.profiles){assert.deepEqual(useful(profile),useful(before.profiles.get(key)));assert.ok(profile.records.some(r=>r['event.id']));assert.ok(profile.records.some(r=>r['k8s.namespace.name']==='neighbor-control'));}
+});
+
+for(const {concurrent,expanded,surge}of [{concurrent:false,expanded:false},{concurrent:true,expanded:false},{concurrent:true,expanded:true},{concurrent:true,expanded:false,surge:true}])test((surge?'surge ':expanded?'expanded ':'' )+(concurrent?'concurrent':'serial')+' sustained evaluator drains real worker jobs across groups and preserves restart/resume (test-double reasoning)',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'sre-group-burst-')),suite=sustainedGroupSuite({recordsPerService:6000,...(surge?{cohorts:6,hotRooms:32,messiness:'turbulent'}:expanded?{cohorts:4,hotRooms:26,messiness:'saturated'}:{})});let calls=0;
   const reasoner={mode:'claude',investigate:async context=>{
     calls++;
     if(concurrent)await delay(30);
@@ -77,19 +84,19 @@ for(const {concurrent,expanded}of [{concurrent:false,expanded:false},{concurrent
   }};
   try{
     const evaluate=concurrent?runConcurrentGroupEvaluation:runGroupBurstEvaluation;
-    const report=await evaluate({directory,recordsPerService:6000,burstOffsets:[0,1,2],burstIntervalMs:25,hotUpdates:4,maxTurns:expanded?500:60,expanded,reasoner});
+    const report=await evaluate({directory,recordsPerService:6000,burstOffsets:[0,1,2],burstIntervalMs:25,hotUpdates:4,maxTurns:expanded||surge?500:60,expanded:surge?undefined:expanded,surge,reasoner});
     assert.equal(report.model,'test-double');assert.equal(report.status,'passed',JSON.stringify({checks:report.checks,cases:report.cases.map(c=>({case:c.case,checks:c.checks}))}));
-    assert.equal(report.metrics.acceptedMessages,expanded?424:212);assert.equal(report.metrics.duplicateDeliveries,expanded?136:68);assert.equal(report.metrics.questions,suite.groups.length);assert.equal(report.metrics.publishedQuestionJobs,suite.groups.length);
+    assert.equal(report.metrics.acceptedMessages,surge?467:expanded?424:212);assert.equal(report.metrics.duplicateDeliveries,surge?162:expanded?136:68);assert.equal(report.metrics.questions,suite.groups.length);assert.equal(report.metrics.publishedQuestionJobs,suite.groups.length);
     if(!concurrent)assert.ok(report.attempts.some(a=>a.jobStatus==='superseded'||a.jobStatus==='pending'),'new evidence must fence stale model publication');
-    if(concurrent){assert.equal(report.metrics.maxActive,4);assert.ok(report.metrics.questionPublicationP95Ms>=0);assert.equal(report.parameters.workloadVersion,7);assert.equal(report.parameters.questionBatchLimit,32);assert.equal(report.checks.boundedRequestBytes,true);assert.equal(report.checks.allQuestionRepliesQueued,true);assert.equal(report.metrics.queuedQuestionReplies,suite.groups.length);}
-    assert.equal(report.bursts.length,expanded?72:36);assert.equal(report.groups.filter(g=>g.answered===1).length,suite.groups.length);
+    if(concurrent){assert.equal(report.metrics.maxActive,4);assert.ok(report.metrics.questionPublicationP95Ms>=0);assert.equal(report.parameters.workloadVersion,8);assert.equal(report.parameters.questionBatchLimit,32);assert.equal(report.checks.boundedRequestBytes,true);assert.equal(report.checks.allQuestionRepliesQueued,true);assert.equal(report.metrics.queuedQuestionReplies,suite.groups.length);assert.equal(report.metrics.questionLatencyByCohort.busy.published,surge?32:expanded?26:14);assert.equal(report.metrics.questionLatencyByCohort.other.queuedReplies,suite.groups.length-(surge?32:expanded?26:14));}
+    assert.equal(report.bursts.length,expanded||surge?72:36);assert.equal(report.groups.filter(g=>g.answered===1).length,suite.groups.length);
     assert.ok(report.events.some(e=>e.type==='restart'));assert.equal(report.metrics.rollbacks,0);
     const before=calls,resumed=await evaluate({directory,reasoner});assert.equal(calls,before);assert.equal(resumed.status,'passed');assert.equal(resumed.attempts.length,report.attempts.length);
     if(concurrent){await assert.rejects(()=>evaluate({directory,reasoner,concurrency:2}),/cannot change concurrency/);await assert.rejects(()=>evaluate({directory,reasoner,expanded:!expanded}),/cannot change its workload/);for(const key of ['citationProtocol','promptHash'])await assert.rejects(()=>evaluate({directory,reasoner:{...reasoner,options:{[key]:'changed'}}}),/citation protocol or prompt hash/);}
     const first=report.attempts[0],inputs=(await readFile(join(directory,'attempts',String(first.number).padStart(3,'0')+'-'+first.case+'-input.json'),'utf8'));
     assert.ok(!inputs.includes('"expected"'));assert.ok(!inputs.includes('"remediation":"rollback-candidate"'));
     const parameters=JSON.parse(await readFile(join(directory,'fixture.json'),'utf8'));
-    if(concurrent){for(const field of ['questionBatchLimit','requestBatchMaxBytes']){await writeFile(join(directory,'fixture.json'),JSON.stringify({...parameters,[field]:parameters[field]-1}));await assert.rejects(()=>evaluate({directory,reasoner}),/pinned request batching contract/);}await writeFile(join(directory,'fixture.json'),JSON.stringify(parameters));}
+    if(concurrent){for(const field of ['questionBatchLimit','requestBatchMaxBytes']){await writeFile(join(directory,'fixture.json'),JSON.stringify({...parameters,[field]:parameters[field]-1}));await assert.rejects(()=>evaluate({directory,reasoner}),/pinned request batching contract/);}await writeFile(join(directory,'fixture.json'),JSON.stringify({...parameters,requestFreshnessPolicy:{}}));await assert.rejects(()=>evaluate({directory,reasoner}),/freshness policy/);await writeFile(join(directory,'fixture.json'),JSON.stringify(parameters));}
     await writeFile(join(directory,'fixture.json'),JSON.stringify({...parameters,executionModel:'actual-claude'}));
     await assert.rejects(()=>evaluate({directory,reasoner}),/cannot change model providers/);
   }finally{await rm(directory,{recursive:true,force:true});}
