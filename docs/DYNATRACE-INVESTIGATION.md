@@ -1,5 +1,7 @@
 # Noisy Dynatrace evidence and Claude source investigation
 
+The [first diagnosis milestone](DYNATRACE-GITLAB-DIAGNOSIS.md) extends host-controlled follow-ups with observed exact operation/release/trace/error selectors and tightens planning-only rollback validation. Its six-case real-model evaluation focuses on log-to-code diagnosis; Teams communication is deferred.
+
 The Claude worker prioritizes Dynatrace evidence and exact GitLab source over routine collaboration updates. Host code reduces data and validates provenance; the actual Claude model proposes a diagnosis and recovery plan. There is no application-defect catalog or rules fallback in this path. All deployment execution remains behind the existing independent host policy and approval boundary.
 
 ## Read from Grail within an explicit budget

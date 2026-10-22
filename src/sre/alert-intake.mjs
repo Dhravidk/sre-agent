@@ -1,5 +1,6 @@
 import {hash,assertText} from './security.mjs';
 import {rootConversation} from './collaboration.mjs';
+import {rememberAlertReply} from './alert-replies.mjs';
 
 // The vendor workflow mirrors a structured alert to this signed ingress. We do
 // not trust another bot's display name, parse free-form commands, or fetch a
@@ -34,5 +35,6 @@ export async function bindAlertThread(store,q,event,eventId,incidentId,now) {
   await store.rememberConversation({tenant:thread.tenantId,serviceKey:service.key,reference:{...reference,activityId:thread.messageId,conversation:{...reference.conversation,id:conversationId,conversationType:'channel'}}},q);
   await store.bindConversation(key,incidentId,q);
   await q('INSERT INTO sre_alert_threads(event_id,incident_id,conversation_key,provider,alert_id,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING',[eventId,incidentId,key,event.payload.provider,event.payload.alertId,now]);
+  if(existing?.incident_id!==incidentId)await rememberAlertReply(q,{incidentId,conversationKey:key,eventId,now});
   return {conversationKey:key,joined:existing?.incident_id!==incidentId};
 }

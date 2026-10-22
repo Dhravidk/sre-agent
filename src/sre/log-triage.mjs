@@ -1,6 +1,6 @@
 import {logIdentity} from './signal-digest.mjs';
 import {logRecordHash} from './log-observation.mjs';
-import {redact} from './security.mjs';
+import {hash,redact} from './security.mjs';
 
 // Data reduction only. No signature here identifies a particular application
 // defect or supplies a causal diagnosis; Claude must examine the evidence.
@@ -67,11 +67,9 @@ export function triageLogBatch(content){
     group.samples[index]=item;
     // Match the original retained, redacted record after shortening a sample.
     // This metadata is for host deduplication, never an independent witness.
-    if(item!==record||group.sampleOrigins){
-      group.sampleOrigins??=Array(index).fill(null);
-      const original=redact(record,2);
-      group.sampleOrigins[index]=item===record?null:{recordHash:logRecordHash('dynatrace',original),signalKey:logIdentity(original,'dynatrace').key};
-    }
+    group.sampleOrigins??=Array(index).fill(null);
+    const original=redact(record,2);
+    group.sampleOrigins[index]={recordIndex:scanned-1,recordHash:logRecordHash('dynatrace',original),signalKey:logIdentity(original,'dynatrace').key};
     forget(group);for(const ref of references)if(group.references.length<8&&!group.references.some(r=>r.path===ref.path&&r.line===ref.line))group.references.push(ref);remember(group);
     const aggregate=summaries.get(unique);if(aggregate&&group.serverAggregates.length<2)group.serverAggregates.push(aggregate);
   }
@@ -88,9 +86,9 @@ export function triageLogBatch(content){
   selected.sort((a,b)=>score(b)-score(a)||a.observations-b.observations||a.key.localeCompare(b.key));
   return {coverage:{recordsAvailable:records.length,recordsScanned:scanned,recordsNotScanned:records.length-scanned,duplicateObservations:duplicates,invalidRecords:invalid,missingTimestamps,retainedGroups:groups.size,selectedGroups:selected.length,operationsAvailable:banks.size,operationsSelected:new Set(selected.map(g=>JSON.stringify([g.source,g.entity,g.environment,g.operation]))).size,omittedGroups:Math.max(0,groups.size-selected.length),unretainedObservations:unretained,sourceComplete:content.complete===true,sourceCoverage:content.coverage||null},groups:selected.map(({rank,...g})=>g),interpretation:'Host data reduction, not diagnosis. observations counts only unique observed samples in this batch, not population failures or rates. serverAggregates are provider counts for structured strata; an arbitrary sample cannot characterize every message in its stratum. Do not add aggregate counts to sample counts. Operation/release diversity and rarity/severity/stack references prioritize inspection, not causality. Samples and queries may be incomplete; overlapping batches are not independent evidence.'};
 }
-export async function retainLogTriage(store,incidentId,rawEvidenceId,content){
+export async function retainLogTriage(store,incidentId,rawEvidenceId,content,{query}={}){
   const triage=triageLogBatch(content),ids=[];
-  for(const group of triage.groups)ids.push(await store.addEvidence(incidentId,'dynatrace','log_triage',{derivedFrom:rawEvidenceId,hostDataReduction:true,complete:false,records:group.samples,triage:{...group,samples:undefined},coverage:triage.coverage,interpretation:triage.interpretation}));
+  for(const group of triage.groups)ids.push(await store.addEvidence(incidentId,'dynatrace','log_triage',{derivedFrom:rawEvidenceId,hostDataReduction:true,complete:false,records:group.samples,triage:{...group,samples:undefined},coverage:triage.coverage,interpretation:triage.interpretation},undefined,query));
   return {ids,references:triage.groups.flatMap(g=>g.references.map(ref=>({...ref,operation:g.operation,version:g.version}))),coverage:triage.coverage};
 }
 
@@ -102,10 +100,16 @@ export function incidentLogReferences(context,references){
 // Standard evidence redaction retains at most 500 array entries. Store larger
 // batches as idempotent pages before publishing the manifest. Interrupted page
 // writes cannot publish a complete batch; retries reuse content-addressed rows.
-export async function retainLogBatch(store,incidentId,content){
+export function logBatchArtifacts(incidentId,content){
   const records=Array.isArray(content?.records)?content.records:[];
-  if(records.length<=500)return store.addEvidence(incidentId,'dynatrace','logs',content);
+  if(records.length<=500)return {pages:[],content};
   const retained=Math.min(records.length,logTriageLimits.records),pages=[];
-  for(let offset=0;offset<retained;offset+=500)pages.push(await store.addEvidence(incidentId,'dynatrace','log_page',{offset,records:records.slice(offset,Math.min(offset+500,retained)),projection:'Standard evidence redaction and per-record field/string/depth bounds apply.'}));
-  return store.addEvidence(incidentId,'dynatrace','logs',{...content,records:[],rawPages:pages,complete:content.complete===true&&retained===records.length,retention:{recordsAvailable:records.length,recordsRetained:retained,recordsNotRetained:records.length-retained,pageSize:500,pages:pages.length},interpretation:'Records are retained in redacted rawPages. Pages are excluded from the bounded model snapshot; derived log_triage rows contain selected samples. Missing records, redaction and per-record storage projection remain limitations.'});
+  for(let offset=0;offset<retained;offset+=500)pages.push({offset,records:records.slice(offset,Math.min(offset+500,retained)),projection:'Standard evidence redaction and per-record field/string/depth bounds apply.'});
+  const rawPages=pages.map(page=>hash([incidentId,'dynatrace','log_page',redact(page)]));
+  return {pages,content:{...content,records:[],rawPages,complete:content.complete===true&&retained===records.length,retention:{recordsAvailable:records.length,recordsRetained:retained,recordsNotRetained:records.length-retained,pageSize:500,pages:pages.length},interpretation:'Records are retained in redacted rawPages. Pages are excluded from the bounded model snapshot; derived log_triage rows contain selected samples. Missing records, redaction and per-record storage projection remain limitations.'}};
+}
+export async function retainLogBatch(store,incidentId,content,{query}={}){
+  const batch=logBatchArtifacts(incidentId,content);
+  for(const page of batch.pages)await store.addEvidence(incidentId,'dynatrace','log_page',page,undefined,query);
+  return store.addEvidence(incidentId,'dynatrace','logs',batch.content,undefined,query);
 }

@@ -168,6 +168,6 @@ test('the PostgreSQL SQL contract commits a source-bound approval and idempotent
 test('the delivered-proposal yes flow creates a real local fixture fix and passes its business checks exactly once',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'sre-qa-command-branch-')),f=await fixture();try{
     f.r.casework.qaAdapter=createPilotQaAdapter(directory);const request=await f.propose();await f.deliver();await f.send('yes');assert.equal(await f.status(request.id),'approved');await f.r.casework.runOnce();assert.equal(await f.r.casework.runOnce(),false);
-    const result=(await f.r.casework.snapshot(f.id)).qa.find(r=>r.id===request.id);assert.equal(result.status,'passed',result.error);assert.notEqual(result.result.reproduction.exitCode,0);assert.equal(result.result.validation.exitCode,0);assert.match(result.result.branch,/^codex\/qa-/);assert.match(result.result.commit,/^[a-f0-9]{40}$/);assert.equal((await f.r.store.snapshot()).rollbacks.length,0);
+    const result=(await f.r.casework.snapshot(f.id)).qa.find(r=>r.id===request.id);result.result=(await f.r.casework.qaRequest(f.id,result.id)).result;assert.equal(result.status,'passed',result.error);assert.notEqual(result.result.reproduction.exitCode,0);assert.equal(result.result.validation.exitCode,0);assert.match(result.result.branch,/^codex\/qa-/);assert.match(result.result.commit,/^[a-f0-9]{40}$/);assert.equal((await f.r.store.snapshot()).rollbacks.length,0);
   }finally{await f.r.close();await rm(directory,{recursive:true,force:true});}
 });

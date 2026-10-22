@@ -6,7 +6,7 @@ Run this explicitly with the approved/authenticated Claude installation:
 pnpm sre:groups:eval --live
 ```
 
-This consumes actual Claude usage through the restricted CLI, `IncidentWorker`, four database-coordinated slots and durable SQLite jobs. Each incident remains exclusive. Inputs use authored Dynatrace, GitLab, Jira/Confluence and deployment contracts. Group events enter the admitted-room/store boundary directly. There is no Teams network/authentication exercise, HTTP capacity measurement, live vendor query, outbound sender or deployment writer in this workload. Use `--concurrency 1` through `--concurrency 4` to select the bounded capacity before creating a fresh evaluation directory.
+This consumes actual Claude usage through the restricted CLI, `IncidentWorker`, four database-coordinated slots by default and durable SQLite jobs. Each incident remains exclusive. Inputs use authored Dynatrace, GitLab, Jira/Confluence and deployment contracts. Group events enter the admitted-room/store boundary directly. There is no Teams network/authentication exercise, HTTP capacity measurement, live vendor query, outbound sender or deployment writer in this workload. Use `--concurrency 1` through `--concurrency 8` to select the bounded capacity before creating a fresh evaluation directory.
 
 ## Explicit local Codex alternative
 
@@ -23,6 +23,12 @@ The evaluation-only adapter requires the verified CLI `0.163.0-alpha.10.2` and r
 The same bounded stdin snapshot, evidence/source validation and publication fences apply. Production configuration continues to select Claude. There is no automatic provider fallback. Reports label actual Codex, actual Claude and test-double reasoning separately. A Codex result does not complete a pending Claude acceptance check.
 
 ## Workload
+
+The Codex development adapter now requests low response verbosity while retaining medium reasoning effort. It supplies the shared SRE instructions through a private temporary `model_instructions_file`, replacing the built-in coding preamble; its prompt hash covers the actual Codex instruction text. These are documented [Codex configuration controls](https://learn.chatgpt.com/docs/config-file/config-reference). The file contains host instructions only and is removed with the invocation directory. Vendor evidence stays on bounded stdin, and tools remain disabled.
+
+Fresh concurrent evaluation directories pin verbosity along with model, effort, timeout, citation protocol and prompt hash. Preserve older directories and select a fresh directory after an adapter change; a run cannot silently resume with different settings. Identical question text is shared only in the model transport, after checking the complete original request budget. Native wire inputs are retained separately from original request batches for inspection.
+
+The [latency follow-up](DYNATRACE-LATENCY.md) separately compares four/eight slots and the new two-minute maximum settling window. The quiet period remains five seconds; saved older gate deadlines remain fixed. Older results below retain their original one-minute policy and are not relabeled as runs of the new policy.
 
 Ten incidents are open before inference, spanning eight source/service scopes and 32 distinct admitted group conversations. Two independently namespaced copies of the [five incident decision classes](DYNATRACE-MULTI-INCIDENT-EVALUATION.md#decisions-being-tested) have different source paths, projects and immutable SHAs. This tests concurrent load and source isolation; it adds no novel defect classes. Two operations share each identity service population but retain separate incident audiences.
 

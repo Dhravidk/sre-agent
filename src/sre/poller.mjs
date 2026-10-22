@@ -22,7 +22,8 @@ export class ConnectorPoller {
       const signal=AbortSignal.timeout(60000);
       if(source==='dynatraceLogs') {
         const logs=await client.logs({from:since,to:until,signal});
-        if(logs.records.length)await this.store.ingest({id:hash(logs.records),source:'dynatrace-logs',serviceKey:service.key,kind:'log',at:Math.max(...logs.records.map(x=>Date.parse(x.timestamp)).filter(Number.isFinite),since),payload:logs});
+        if(!logs||!Array.isArray(logs.records)||logs.records.length>500||typeof logs.complete!=='boolean')throw Error('Log reader returned an invalid bounded receipt');
+        if(logs.records.length)await this.store.ingestLogRead({serviceKey:service.key,logs,until});
         if(this.logDetector)await this.logDetector.observe(service,'dynatrace-logs',logs);
         if(!logs.complete)throw new Error('Log query was truncated; narrow the time window or service filter. Checkpoint retained.');
       } else {
@@ -89,7 +90,7 @@ export class ConnectorPoller {
       const tasks=[];
       for(const service of this.services) {
         const clients=this.connectors.get(service.key)||{};
-        for(const source of ['dynatrace','servicenow','github','gitlab','dynatraceLogs'])if(clients[source])tasks.push(()=>this.readSource(service,source,clients[source]));
+        for(const source of ['dynatrace','servicenow','github','gitlab','dynatraceLogs'])if(clients[source]&&(source!=='gitlab'||service.gitlab?.project))tasks.push(()=>this.readSource(service,source,clients[source]));
         for(const monitor of service.monitors||[])tasks.push(()=>this.readMonitor(service,monitor,clients.dynatrace));
       }
       let cursor=0;

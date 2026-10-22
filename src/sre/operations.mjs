@@ -3,8 +3,9 @@ import { hash, redact } from './security.mjs';
 import { pollScopeHash } from './poll-scope.mjs';
 import {handledDeliveryInspectionSql} from './delivery-inspections.mjs';
 import {routeWaitReason} from './teams-routing.mjs';
+import {restoreSummary} from './restore-recovery.mjs';
 
-const instanceCondition=code=>code.startsWith('loop_')||code.startsWith('instance_poll_')||code.startsWith('instance_delivery_')||['clock_skew','observer_error'].includes(code);
+const instanceCondition=code=>code.startsWith('loop_')||code.startsWith('instance_poll_')||code.startsWith('instance_delivery_')||code.startsWith('instance_qa_')||['clock_skew','observer_error'].includes(code);
 
 export function connectionReadHealth(connection,report) {
   if(!connection.enabled)return {state:'offline',detail:'Reader disabled'};
@@ -26,8 +27,8 @@ export function operationalLimits(config) {
 }
 
 export class OperationalMonitor {
-  constructor({store,config,poller,outbox,schedulerEnabled=true,investigationBudgetMs=0}) {
-    Object.assign(this,{store,config,poller,outbox,schedulerEnabled});this.limits=operationalLimits(config);this.tickLimitMs=investigationBudgetMs>0?Math.max(this.limits.maxTickDurationSeconds*1000,investigationBudgetMs+10000):this.limits.maxTickDurationSeconds*1000;this.startedAt=store.clock();this.runtimeId=randomUUID();this.instanceId=config.instanceId||'agent';this.loops={tick:{running:false},poll:{running:false},commands:{running:false},...(outbox?{delivery:{running:false}}:{})};this.active=null;this.stopped=false;
+  constructor({store,config,poller,outbox,casework,schedulerEnabled=true,investigationBudgetMs=0}) {
+    Object.assign(this,{store,config,poller,outbox,casework,schedulerEnabled});this.limits=operationalLimits(config);this.tickLimitMs=investigationBudgetMs>0?Math.max(this.limits.maxTickDurationSeconds*1000,investigationBudgetMs+10000):this.limits.maxTickDurationSeconds*1000;this.startedAt=store.clock();this.runtimeId=randomUUID();this.instanceId=config.instanceId||'agent';this.loops={tick:{running:false},poll:{running:false},commands:{running:false},...(outbox?{delivery:{running:false}}:{}),...(casework?{actions:{running:false}}:{})};this.active=null;this.stopped=false;
   }
   begin(lane) {Object.assign(this.loops[lane],{running:true,startedAt:this.store.clock(),lastStartedAt:this.store.clock()});}
   end(lane,error) {Object.assign(this.loops[lane],{running:false,lastFinishedAt:this.store.clock(),...(error?{error:redact(String(error.message)).slice(0,1000)}:{error:null,lastSuccessAt:this.store.clock()})});}
@@ -39,7 +40,7 @@ export class OperationalMonitor {
     const coordinationNow=await this.store.coordinationNow(),afterClockRead=this.store.clock();
     const clockOffset=now>coordinationNow?now-coordinationNow:afterClockRead<coordinationNow?afterClockRead-coordinationNow:0;
     if(this.store.db.dialect==='postgres'&&Math.abs(clockOffset)>30000)add(null,'clock:application','clock_skew','The application clock differs from PostgreSQL by more than 30 seconds; synchronize the host clock.',{offsetMs:clockOffset});
-    const pollCheckpointIds=this.config.services.flatMap(service=>[...['dynatrace','dynatraceLogs','servicenow','github','gitlab'].filter(source=>service[source]?.enabled).map(source=>source+':'+service.key),...(service.monitors||[]).map(monitor=>'metric:'+service.key+':'+monitor.id)]);
+    const pollCheckpointIds=this.config.services.flatMap(service=>[...['dynatrace','dynatraceLogs','servicenow','github','gitlab'].filter(source=>service[source]?.enabled&&(source!=='gitlab'||service.gitlab?.project)).map(source=>source+':'+service.key),...(service.monitors||[]).map(monitor=>'metric:'+service.key+':'+monitor.id)]);
     const [checkpointRows,jobs,outbox,rollbacks,qa,reviews]=await Promise.all([
       pollCheckpointIds.length?this.store.db.query('SELECT id,value FROM sre_checkpoints WHERE id IN ('+pollCheckpointIds.map(()=>'?').join(',')+')',pollCheckpointIds):[],
       this.store.db.query("SELECT i.service_key,j.status,COUNT(*) AS count,MIN(j.created_at) AS oldest,MIN(j.lease_until) AS lease_until FROM sre_jobs j JOIN sre_incidents i ON i.id=j.incident_id WHERE j.status IN ('pending','running','dead') GROUP BY i.service_key,j.status"),
@@ -50,7 +51,7 @@ export class OperationalMonitor {
     ]);
     const checkpoints=new Map(checkpointRows.map(row=>{try{return [row.id,JSON.parse(row.value)];}catch{return [row.id,{error:'Invalid polling checkpoint'}];}}));
     for(const service of this.config.services) {
-      const required=['dynatrace','dynatraceLogs','servicenow','github','gitlab'].filter(source=>service[source]?.enabled).map(source=>({id:source+':'+service.key,label:source}));
+      const required=['dynatrace','dynatraceLogs','servicenow','github','gitlab'].filter(source=>service[source]?.enabled&&(source!=='gitlab'||service.gitlab?.project)).map(source=>({id:source+':'+service.key,label:source}));
       for(const monitor of service.monitors||[])required.push({id:'metric:'+service.key+':'+monitor.id,label:'metric '+monitor.id,monitor});
       for(const source of required) {
         const checkpoint=checkpoints.get(source.id)||{};
@@ -110,6 +111,9 @@ export class OperationalMonitor {
     const transport=this.outbox?.deliveryState();
     if(transport&&transport.reserved>=transport.limit&&transport.timedOut)add(null,'delivery:capacity','instance_delivery_saturated','Teams send capacity is occupied by unresolved calls; incident intake and investigation continue.',{...transport});
     if(this.outbox?.auditError)add(null,'delivery:audit','instance_delivery_audit','Late Teams delivery evidence could not be saved: '+this.outbox.auditError);
+    const qaExecution=this.casework?.qaState();
+    if(qaExecution?.timedOut&&qaExecution.reserved>=qaExecution.limit)add(null,'qa:capacity','instance_qa_saturated','Local QA capacity is occupied by an unresolved cancelled call; read-only incident investigation continues. Inspect the saved workspace before requesting more QA.',{...qaExecution});
+    if(this.casework?.qaExecution.auditError)add(null,'qa:audit','instance_qa_audit','Late local QA evidence could not be saved: '+this.casework.qaExecution.auditError);
     for(const row of rollbacks) {
       const count=Number(row.count),key='rollback:'+row.status;
       if(row.status==='unknown')add(row.service_key,key,'rollback_unknown','A rollback dispatch outcome is unknown; reconcile its request before another action.',{count});
@@ -119,7 +123,7 @@ export class OperationalMonitor {
     for(const row of qa){
       const key='qa:'+row.status,count=Number(row.count);
       if(['failed','unknown'].includes(row.status))add(row.service_key,key,'qa_'+row.status,row.status==='unknown'?'Local QA was interrupted or its outcome is uncertain; inspect the saved workspace and audit before another request.':'Local QA failed; review its recorded test result or scope error.',{count});
-      if(row.status==='superseded')add(row.service_key,key,'qa_superseded','Local QA artifacts describe an older incident revision or authorization scope; review a fresh plan before further work.',{count});
+      if(row.status==='superseded')add(row.service_key,key,'qa_superseded','Local QA artifacts describe an older incident revision, assessment or authorization scope; review a fresh plan before further work.',{count});
       if(row.status==='running'&&Number(row.lease_until)<=coordinationNow)add(row.service_key,key,'qa_stuck','A local QA execution lease expired; its outcome requires reconciliation.',{count});
       if(row.status==='approved'&&coordinationNow-Number(row.oldest)>this.limits.maxQueueAgeSeconds*1000)add(row.service_key,key,'qa_delayed','Approved local QA is waiting beyond the configured queue age.',{count});
     }
@@ -131,7 +135,7 @@ export class OperationalMonitor {
     }
     if(this.observerError)add(null,'operations:observer','observer_error','Operational notice persistence failed: '+this.observerError);
     conditions.sort((a,b)=>(String(a.serviceKey)+a.key+a.code).localeCompare(String(b.serviceKey)+b.key+b.code));
-    return {state:conditions.length?'needs-attention':pendingSources.length?'starting':'healthy',observedAt:now,runtimeId:this.runtimeId,instanceId:this.instanceId,startedAt:this.startedAt,schedulerEnabled:this.schedulerEnabled,mode:this.config.mode,liveAccessValidated:false,conditions,pendingSources,localSources,loops:structuredClone(this.loops),note:this.config.mode==='local'?'Offline fixture operation. Live vendor access is unverified.':this.config.mode==='trial'?'Claude CLI analysis with fictional provider evidence. Teams and rollback execution are simulated; live vendor access is unverified.':'Shared service state and local checks for instance '+this.instanceId+' ('+this.runtimeId.slice(0,8)+'). Other runtime views require their own observation.'};
+    return {state:conditions.length?'needs-attention':pendingSources.length?'starting':'healthy',recovery:restoreSummary(recoveryFence),observedAt:now,runtimeId:this.runtimeId,instanceId:this.instanceId,startedAt:this.startedAt,schedulerEnabled:this.schedulerEnabled,mode:this.config.mode,liveAccessValidated:false,conditions,pendingSources,localSources,loops:structuredClone(this.loops),note:this.config.mode==='local'?'Offline fixture operation. Live vendor access is unverified.':this.config.mode==='trial'?'Claude CLI analysis with fictional provider evidence. Teams and rollback execution are simulated; live vendor access is unverified.':'Shared service state and local checks for instance '+this.instanceId+' ('+this.runtimeId.slice(0,8)+'). Other runtime views require their own observation.'};
   }
   observe() {
     if(this.stopped)return Promise.resolve();

@@ -1,15 +1,19 @@
+import {materialSourceFindings} from './source-references.mjs';
+import {materialSourceInventory} from './source-inventory.mjs';
+import {materialDiscovery} from './source-discovery.mjs';
+import {materialEvidenceReads} from './evidence-request.mjs';
 import {hash,redact} from './security.mjs';
 import {materialChangeObservations} from './change-observation-notices.mjs';
 
 // Wording can change on every model turn. Compare structured judgments and
 // host-owned observations, leaving full explanations in assessment history.
-const materialKey=a=>hash({incidentStatus:a.incidentStatus,changeAssessment:a.changeAssessment,candidateSha:a.candidateSha,remediation:a.remediation?{kind:a.remediation.kind,targetSha:a.remediation.targetSha}:null,findings:(a.codeFindings||[]).map(f=>[f.provider,f.path,f.sha,f.lineStart,f.lineEnd]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),likelihood:a.risk?.likelihood,confidence:a.risk?.confidence,stage:a.risk?.scope?.stage,headSha:a.risk?.scope?.headSha,mergedSha:a.risk?.scope?.mergedSha,rollback:a.rollback,trackedChanges:a.trackedChanges,observedChanges:materialChangeObservations(a.observedChanges||[]),observedChangesLimited:a.observedChangesLimited||false,directory:a.contacts?.directoryId,contacts:a.contacts?.contacts?.map(c=>[c.id,c.role]).sort()});
+const materialKey=a=>hash({incidentStatus:a.incidentStatus,changeAssessment:a.changeAssessment,candidateSha:a.candidateSha,remediation:a.remediation?{kind:a.remediation.kind,targetSha:a.remediation.targetSha}:null,...(a.sourceFindings?.length?{sourceFindings:materialSourceFindings(a.sourceFindings)}:{}),...(a.sourceInventories?{sourceInventories:materialSourceInventory(a.sourceInventories)}:{}),...(a.sourceDiscovery?{sourceDiscovery:materialDiscovery(a.sourceDiscovery)}:{}),...(a.observedSignals?{observedSignals:a.observedSignals}:{}),...(a.evidenceAcquisition?.outcomes?.length?{evidenceReads:materialEvidenceReads(a.evidenceAcquisition.outcomes)}:{}),findings:(a.codeFindings||[]).map(f=>[f.provider,f.path,f.sha,f.lineStart,f.lineEnd]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),likelihood:a.risk?.likelihood,confidence:a.risk?.confidence,stage:a.risk?.scope?.stage,headSha:a.risk?.scope?.headSha,mergedSha:a.risk?.scope?.mergedSha,rollback:a.rollback,trackedChanges:a.trackedChanges,observedChanges:materialChangeObservations(a.observedChanges||[]),observedChangesLimited:a.observedChangesLimited||false,directory:a.contacts?.directoryId,contacts:a.contacts?.contacts?.map(c=>[c.id,c.role]).sort()});
 
 // A checkpoint means queued, never delivered or acknowledged. Keep it through
 // retries/restarts so another model turn cannot manufacture a repeated notice.
 export async function queueModelMessages(store,q,{job,analysis,previous,changed,id,replies,notice,contactFormat}){
   if(!Array.isArray(analysis.teamsMessages)||analysis.teamsMessages.length>4)throw Error('Invalid agent message requests');
-  const direct=new Set([...(job.payload.question?[job.payload.conversationKey]:[]),...(job.payload.requests||[]).map(r=>r.conversationKey),...replies].filter(Boolean)),destinations=new Set();
+  const queued=new Map(),direct=new Set([...(job.payload.question?[job.payload.conversationKey]:[]),...(job.payload.requests||[]).map(r=>r.conversationKey),...replies].filter(Boolean)),destinations=new Set();
   for(const message of analysis.teamsMessages){
     if(typeof message.text!=='string'||!message.text.trim()||message.text.length>4000||destinations.has(message.roomKey))throw Error('Invalid agent message request');
     destinations.add(message.roomKey);
@@ -20,7 +24,7 @@ export async function queueModelMessages(store,q,{job,analysis,previous,changed,
     if(prior&&(prior.version!==1||!/^[a-f0-9]{64}$/.test(prior.textHash||'')||prior.assessmentHash!==undefined&&!/^[a-f0-9]{64}$/.test(prior.assessmentHash)))throw Error('Invalid saved agent notification fingerprint');
     const legacy=previous?.teamsMessages?.find(m=>m.roomKey===room.id),previousHash=prior?.textHash||(legacy?hash(redact(legacy.text.trim())):null);
     if(!direct.has(room.id)&&previousHash&&(previousHash===textHash||prior?.assessmentHash===assessmentHash||!prior?.assessmentHash&&!changed))continue;
-    await store.queueMessage(job.incident_id,message.text,room.id,id+':agent:'+room.id,q);
+    await store.queueMessage(job.incident_id,message.text,room.id,id+':agent:'+room.id,q);queued.set(room.id,id+':agent:'+room.id);
     await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',[key,JSON.stringify({version:1,textHash,assessmentHash}),await store.coordinationNow(q)]);
   }
   // Model-selected wording is optional. A human's direct question and retained
@@ -31,7 +35,8 @@ export async function queueModelMessages(store,q,{job,analysis,previous,changed,
     if(room.incident_id!==job.incident_id)throw Error('Reply destination no longer follows the incident');
     const text=analysis.text??notice??analysis.summary;
     if(typeof text!=='string'||!text.trim())throw Error('A direct request requires an assessment reply');
-    await store.queueMessage(job.incident_id,text,room.id,id+':agent:'+room.id,q,{contacts:analysis.contacts,contactFormat});
+    await store.queueMessage(job.incident_id,text,room.id,id+':agent:'+room.id,q,{contacts:analysis.contacts,contactFormat});queued.set(room.id,id+':agent:'+room.id);
     await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-message-last:'+job.incident_id+':'+room.id,JSON.stringify({version:1,textHash:hash(redact(text.trim())),assessmentHash:materialKey(analysis)}),await store.coordinationNow(q)]);
   }
+  return queued;
 }

@@ -1,3 +1,4 @@
+import {incidentLogScope} from './log-scope.mjs';
 import { diagnose } from '../core/engine.mjs';
 import { releases,deploymentBlockers } from './deployments.mjs';
 import { reviewPolicySources } from './policy-catalog.mjs';
@@ -58,16 +59,19 @@ function observations(context,current) {
 function unresolvedLogEvidence(context,observed,current) {
   const digest=context.signalDigest;if(!digest)return {blocked:false,evidenceIds:[]};
   const coverage=digest.coverage||{},asOf=Date.parse(context.riskScope?.asOf),now=Number.isFinite(asOf)?asOf:Date.now();
-  const failures=(digest.groups||[]).filter(group=>['ERROR','CRITICAL','FATAL'].includes(group.level)||recognized.has(group.code));
+  const reference=incidentLogScope(context.incident,context.evidence,now),scopeReported=digest.incidentScope?.state==='reported',scoped=scopeReported&&reference.state==='reported'&&reference.evidenceId===digest.incidentScope.evidenceId;
+  const failures=(digest.groups||[]).filter(group=>['ERROR','CRITICAL','FATAL'].includes(group.level)||recognized.has(group.code)||group.metadataIssues?.length);
   const unexplained=failures.filter(group=>!group.code||!observed.signals.has(group.code));
   const contrary=failures.filter(group=>current&&observed.signals.has(group.code)&&context.deployments.some(release=>release.sha===group.version&&release.sha!==current.sha&&release.at<=current.at)&&group.firstAt!==null&&group.firstAt>=current.at&&group.lastAt<=now);
   // Display-only omissions of fully scanned HTTP health successes cannot prove
   // recovery, and do not erase a separately established invariant regression.
   // Every other omission continues to block the limited attribution.
   const healthOmissions=Number.isSafeInteger(coverage.omittedHealthSuccessGroups)&&coverage.omittedHealthSuccessGroups>=0&&coverage.omittedHealthSuccessGroups<=coverage.omittedGroups?coverage.omittedHealthSuccessGroups:0;
-  const limited=coverage.partialResults>0||coverage.recordsNotScanned>0||coverage.omittedGroups>healthOmissions||coverage.invalidRecords>0||coverage.missingTimestamps>0||coverage.candidateWindowLimited&&coverage.recordsAvailable>0;
+  const crossScope=scoped&&failures.some(group=>group.scopeRelation==='different'),unknownScope=scoped&&coverage.unknownFailureScopeGroups>0,scopeUnverified=/^log-monitor:/.test(context.incident.issue_key||'')&&reference.state!=='reported';
+  const inconsistentMetadata=coverage.inconsistentMetadataRecords>0;
+  const limited=scopeUnverified||scopeReported&&!scoped||unknownScope||inconsistentMetadata||coverage.partialResults>0||coverage.recordsNotScanned>0||coverage.omittedGroups>healthOmissions||coverage.invalidRecords>0||coverage.missingTimestamps>0||coverage.candidateWindowLimited&&coverage.recordsAvailable>0;
   const available=new Set(context.evidence.map(row=>row.id));
-  return {blocked:limited||unexplained.length>0||contrary.length>0,limited,unexplained:unexplained.length>0,contrary:contrary.length>0,evidenceIds:[...new Set([...unexplained,...contrary].flatMap(group=>group.evidenceIds||[]))].filter(id=>available.has(id))};
+  return {blocked:limited||crossScope||unexplained.length>0||contrary.length>0,limited,crossScope,unknownScope,scopeUnverified,inconsistentMetadata,unexplained:unexplained.length>0,contrary:contrary.length>0,evidenceIds:[...new Set([...failures.filter(g=>g.metadataIssues?.length),...unexplained,...contrary].flatMap(group=>group.evidenceIds||[]))].filter(id=>available.has(id))};
 }
 
 export function ruleAttribution(context) {
@@ -90,7 +94,7 @@ export function ruleAttribution(context) {
   const causalProofs=inspected.filter(({entry,review})=>current&&previous&&entry.content.comparisonKind==='deployment'&&entry.content.complete===true&&entry.content.provider===provider&&entry.content.headSha===current.sha&&entry.content.baseSha===previous.sha&&Array.isArray(entry.content.unrecognizedPaths)&&entry.content.unrecognizedPaths.length===0&&review.supported);
   const causal=causalProofs.flatMap(({entry,review})=>review.findings.map(finding=>({...finding,evidenceId:entry.id})));
   const code=[...observed.signals].filter(signal=>signal!=='CREDIT_PROVIDER_UNAVAILABLE'),dependency=observed.signals.has('CREDIT_PROVIDER_UNAVAILABLE');
-  const unsettled=!current||deploymentBlockers(atStart,current).length>0;
+  const unsettled=!current||deploymentBlockers(atStart,current).length>0||previous?.identityConflict||previous?.historyIncomplete||previous?.statusConflict||previous?.attestationConflicts?.length;
   let changeAssessment='unknown';
   if(dependency&&!code.length&&!observed.invalid&&!observed.unknown.length&&!observed.unscopedLatency&&!logs.blocked)changeAssessment='unlikely';
   else if(code.length&&!dependency&&!observed.invalid&&!observed.unknown.length&&!observed.unscopedLatency&&!logs.blocked&&!scopeHead&&!unsettled&&code.every(signal=>causal.some(finding=>finding.signal===signal)))changeAssessment='likely';
@@ -107,6 +111,10 @@ export function ruleAttribution(context) {
   if(inspected.some(item=>!item.review.supported))unknowns.push('Some source comparisons are missing, incomplete, or outside the supported module structure.');
   if(logs.unexplained)unknowns.push('Structured logs contain other failure classes that the limited deployment hypothesis has not explained. Reconcile them with the problem metrics before selecting one cause.');
   if(logs.contrary)unknowns.push('Logs report the same failure on a previous exact release in the current deployment window. Compare the same scope and requests before blaming the current release.');
+  if(logs.scopeUnverified)unknowns.push('This log-monitor incident’s impact scope is missing, invalid or outside the current source window. Collect the native scope before assigning a regional/release cause.');
+  if(logs.crossScope)unknowns.push('Logs contain failures outside this monitor’s reported impact scope. Compare affected requests and dependency paths before connecting or excluding those failures.');
+  if(logs.unknownScope)unknowns.push('Some failure observations have missing or conflicting region/release metadata and cannot be assigned to this reported impact scope.');
+  if(logs.inconsistentMetadata)unknowns.push('Structured observations contain contradictory or malformed log fields. Inspect the original source aliases and mapping before selecting a cause or an automatic patch.');
   if(logs.limited)unknowns.push('Runtime log coverage is sampled, partial, omitted or has invalid/missing timestamps. The limited rules cannot exclude a competing failure.');
   const diagnoses=[...observed.signals].map(signal=>signal==='CATALOG_LATENCY'?diagnose({requests:3,p95Ms:350}):diagnose({codes:[signal]}));
   return {findings,current,changeAssessment,candidateSha:changeAssessment==='likely'?current.sha:null,diagnoses,unknowns,causalEvidenceIds:[...new Set(causal.map(finding=>finding.evidenceId))],runtimeEvidenceIds:[...new Set([...observed.runtime.map(item=>item.id),...logs.evidenceIds])].slice(0,8),inspectedComparisons:inspected.length,supportedComparisons:inspected.filter(item=>item.review.supported).length};

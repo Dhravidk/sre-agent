@@ -168,7 +168,7 @@ test('Claude collection retains raw pages and derived samples before using their
   const store=await new SreStore(sqliteDatabase(':memory:')).initialize(),sample=noisyLogCase(),key='logs',at=Date.now()-1000;
   try{
     const {incidentId}=await store.ingest({id:'worker-log',source:'evaluation',serviceKey:key,kind:'problem',issueKey:'worker-log',status:'OPEN',at,payload:{}}),order=[];
-    const worker=new IncidentWorker({store,services:[{key,environment:'evaluation'}],connectors:new Map([[key,{dynatraceLogs:{investigationLogs:async()=>{order.push('logs');return sample.raw;},logs:()=>{throw Error('legacy newest-200 path must not be used');}},gitlab:{deployments:async()=>{order.push('deployments');return {items:[],complete:true};}}}]]),reasoner:{mode:'claude'}});
+    const worker=new IncidentWorker({store,services:[{key,environment:'evaluation',gitlab:{project:'31'}}],connectors:new Map([[key,{dynatraceLogs:{investigationLogs:async()=>{order.push('logs');return sample.raw;},logs:()=>{throw Error('legacy newest-200 path must not be used');}},gitlab:{deployments:async()=>{order.push('deployments');return {items:[],complete:true};}}}]]),reasoner:{mode:'claude'}});
     await worker.collect(await store.context(incidentId),new AbortController().signal);assert.deepEqual(order,['logs','deployments']);const c=await store.context(incidentId);assert.equal(c.evidenceWindow.rawLogPagesRetained,20);assert.ok(c.evidence.some(e=>e.kind==='log_triage'&&e.content.records.some(r=>r['error.code']==='AMOUNT_INVARIANT_MISMATCH')));assert.equal(Number((await store.db.query('SELECT COUNT(*) AS count FROM sre_rollbacks'))[0].count),0);
   }finally{await store.db.close();}
 });

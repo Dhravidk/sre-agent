@@ -4,12 +4,13 @@ import {mkdtemp,writeFile,readFile,rm,access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {CodexEvaluationReasoner,codexEvaluationSchema,evaluationCliVersion} from '../scripts/lib/codex-evaluation-reasoner.mjs';
+import {CodexEvaluationReasoner,codexEvaluationSchema,evaluationCliVersion,codexInvestigationInstructions} from '../scripts/lib/codex-evaluation-reasoner.mjs';
 import {boundedContext} from '../src/sre/model-context.mjs';
 import {fixtureRisk,riskScope} from '../src/sre/analytic-risk.mjs';
 import {ModelQuotaError} from '../src/sre/model-quota.mjs';
 import {hash} from '../src/sre/security.mjs';
 import {citationTransport} from '../src/sre/model-citations.mjs';
+import Ajv from 'ajv';
 
 function context(){
   const now=Date.now(),c={incident:{id:'inc_codex',service_key:'fixture',status:'open',started_at:now,updated_at:now,revision:1},session:{remote_state:{private:'PRIVATE_SESSION'}},evidence:[{id:'log',source:'dynatrace',kind:'log',observed_at:now,content:{text:'PRIVATE_EVIDENCE'}}],deployments:[],assessmentHistory:[],jobs:[{error:'PRIVATE_AUDIT'}]};
@@ -17,19 +18,20 @@ function context(){
 }
 function assessment(){
   const risk=fixtureRisk(context());risk.sourceQuality=[];risk.contraryEvidenceIds=[];
-  return {summary:'Synthetic Codex transport result',hypotheses:['Need independent evidence.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:['log'],unknowns:['Synthetic provider contracts.'],nextSteps:['Collect independent telemetry.'],risk,codeFindings:[],teamsMessages:[],remediation:{kind:'collect-evidence',targetSha:null,rationale:'Cause unverified.',verificationSteps:['Check control.'],evidenceIds:['log'],blockingUnknowns:['Source missing.']},issueSpec:{title:'Investigate',problem:'Unknown cause.',impact:'Review required.',proposedChange:'Collect evidence.',acceptanceCriteria:['Use an independent control.'],evidenceIds:['log'],openQuestions:['Which source?']}};
+  return {summary:'Synthetic Codex transport result',hypotheses:['Need independent evidence.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:['log'],unknowns:['Synthetic provider contracts.'],nextSteps:['Collect independent telemetry.'],risk,codeFindings:[],sourceFindings:[],evidenceRequests:[],teamsMessages:[],remediation:{kind:'collect-evidence',targetSha:null,rationale:'Cause unverified.',verificationSteps:['Check control.'],evidenceIds:['log'],blockingUnknowns:['Source missing.']},issueSpec:{title:'Investigate',problem:'Unknown cause.',impact:'Review required.',proposedChange:'Collect evidence.',acceptanceCriteria:['Use an independent control.'],evidenceIds:['log'],openQuestions:['Which source?']}};
 }
 const boundary={type:'item.completed',item:{type:'error',message:'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable features.code_mode_host.'}};
 const events=data=>[boundary,{type:'turn.started'},{type:'item.completed',item:{type:'agent_message',text:JSON.stringify(data).replaceAll('"log"','"MODEL_PRIMARY_EVIDENCE"')}},{type:'turn.completed',usage:{input_tokens:100,output_tokens:50}}];
 const output=items=>'process.stdout.write('+JSON.stringify(items.map(v=>JSON.stringify(v)).join('\n')+'\n')+'.replaceAll("MODEL_PRIMARY_EVIDENCE",JSON.parse(input).incident.evidence.find(e=>e.content.text==="PRIVATE_EVIDENCE").id));';
 async function fixture(body,{version=evaluationCliVersion,chatgpt=true,timeoutMs=3000}={}){
   const directory=await mkdtemp(join(tmpdir(),'sre-codex-test-')),command=join(directory,'codex-fixture'),record=join(directory,'record.json');
-  await writeFile(command,'#!'+process.execPath+'\n'+`import {readFileSync,writeFileSync} from 'node:fs';
+  await writeFile(command,'#!'+process.execPath+'\n'+`import {readFileSync,writeFileSync,statSync} from 'node:fs';
 const args=process.argv.slice(2);
 if(args[0]==='--version'){console.log('codex-cli ${version}');process.exit(0);}
 if(args[0]==='login'){console.log(${JSON.stringify(chatgpt?'Logged in using ChatGPT':'Logged in using an API key - PRIVATE_KEY')});process.exit(0);}
 let input='';for await(const chunk of process.stdin)input+=chunk;
-writeFileSync(${JSON.stringify(record)},JSON.stringify({pid:process.pid,cwd:process.cwd(),args,input:JSON.parse(input),env:process.env,schema:JSON.parse(readFileSync(args[args.indexOf('--output-schema')+1],'utf8'))}));
+const instructionsPath=JSON.parse(args.find(a=>a.startsWith('model_instructions_file=')).slice('model_instructions_file='.length));
+writeFileSync(${JSON.stringify(record)},JSON.stringify({pid:process.pid,cwd:process.cwd(),args,input:JSON.parse(input),env:process.env,instructions:readFileSync(instructionsPath,'utf8'),instructionsMode:statSync(instructionsPath).mode&0o777,schema:JSON.parse(readFileSync(args[args.indexOf('--output-schema')+1],'utf8'))}));
 ${body}\n`,{mode:0o700});
   const env={...process.env,SRE_API_TOKEN:'PRIVATE_SERVICE',OPENAI_API_KEY:'PRIVATE_API_KEY',CODEX_API_KEY:'PRIVATE_CODEX_KEY',CLAUDE_CODE_OAUTH_TOKEN:'PRIVATE_CLAUDE',DATABASE_URL:'PRIVATE_DB'};
   return {directory,record,reasoner:new CodexEvaluationReasoner({command,timeoutMs,env}),read:async()=>JSON.parse(await readFile(record,'utf8')),close:()=>rm(directory,{recursive:true,force:true})};
@@ -41,12 +43,28 @@ test('Codex delivers a complete 32-request batch and rejects excessive bytes bef
   finally{await f.close();}
 });
 
+test('Codex delivers every room request through shared identical text and still enforces original byte and count bounds',async()=>{
+  const f=await fixture(output(events(assessment()))),question='Compare the scoped log evidence and immutable source before proposing a recovery. '.repeat(3),requests=Array.from({length:32},(_,n)=>({jobId:'job-'+n,question,conversationKey:'room-'+n}));
+  try{
+    await f.reasoner.investigate(context(),{requests});const {input,pid}=await f.read();
+    assert.deepEqual(input.questionTexts,[question]);assert.equal(input.requestBatch.length,32);
+    assert.deepEqual(input.requestBatch.map(({questionRef,...request})=>({...request,question:input.questionTexts[questionRef]})),requests);
+    for(const invalid of [[...requests,{...requests[0],jobId:'extra'}],requests.map(r=>({...r,question:'界'.repeat(1000)}))]){
+      await assert.rejects(()=>f.reasoner.investigate(context(),{requests:invalid}),/bounded/);assert.equal((await f.read()).pid,pid);
+    }
+  }finally{await f.close();}
+});
+
 test('Codex evaluation uses a version-pinned official CLI, ChatGPT login, disabled execution host and bounded stdin',async()=>{
   const f=await fixture(output(events(assessment()))),states=[];
   try{
     const c=context();c.evidence.push({id:'large',kind:'log',source:'logs',observed_at:1,content:{text:'x'.repeat(200000)}});
     const result=await f.reasoner.investigate(c,{question:null,persistRemote:async value=>states.push(value)}),record=await f.read(),args=record.args.join(' ');
     assert.equal(result.analysis.mode,'codex');assert.equal(result.remoteState.provider,'codex-cli');assert.equal(result.remoteState.requestedModel,'gpt-6.1-sol');
+    assert.equal(f.reasoner.options.effort,'medium');assert.equal(f.reasoner.options.verbosity,'low');
+    assert.ok(args.includes('model_reasoning_effort="medium"'));assert.ok(args.includes('model_verbosity="low"'));
+    assert.equal(record.instructions,codexInvestigationInstructions);assert.equal(hash(record.instructions),f.reasoner.options.promptHash);assert.equal(record.instructionsMode,0o600);
+    assert.ok(args.includes('developer_instructions=""'));assert.ok(!record.instructions.includes('PRIVATE_'));assert.ok(record.instructions.includes('as schema-conforming JSON'));
     assert.equal(result.remoteState.usage.input_tokens,100);assert.equal(states[0].phase,'started');
     for(const flag of ['--ignore-user-config','--ignore-rules','--ephemeral','--strict-config','--enable code_mode_only','--disable code_mode_host','--disable shell_tool','--disable apps','--disable plugins','--disable multi_agent','web_search="disabled"','mcp_servers={}'])assert.ok(args.includes(flag),flag);
     assert.ok(!args.includes('PRIVATE_EVIDENCE'));assert.ok(record.input.incident.evidence.some(e=>e.content.text==='PRIVATE_EVIDENCE'));
@@ -106,4 +124,33 @@ test('Codex cancellation and timeout kill the owned child without publishing a r
 
 test('Codex schema cites only evidence delivered in its bounded snapshot',()=>{
   const schema=codexEvaluationSchema(boundedContext(context()));assert.deepEqual(schema.properties.evidenceIds.items.enum,['log']);
+});
+
+test('Codex strict request unions preserve exclusive kinds and nullable optional project selection',()=>{
+  const c=context();c.evidenceAcquisition={enabled:true};const schema=codexEvaluationSchema(boundedContext(c));
+  assert.ok(!JSON.stringify(schema).includes('"oneOf"'));assert.ok(!JSON.stringify(schema).includes('"const"'));
+  const request=schema.properties.evidenceRequests,check=new Ajv({strict:false}).compile(request),base={sha:'a'.repeat(40),path:'src/ledger/retry.py',reason:'Inspect an immutable helper.'};
+  assert.equal(check([{...base,kind:'gitlab_file',project:null,startLine:1,endLine:2}]),true);
+  assert.equal(check([{...base,kind:'gitlab_tree',project:'approved/project'}]),true);
+  assert.equal(check([{kind:'dynatrace_logs',from:1,to:2,filters:null,reason:'Compare an earlier window.'}]),true);
+  assert.equal(check([{kind:'dynatrace_logs',from:1,to:2,filters:[{field:'http.route',value:'/api/requests'}],reason:'Inspect this exact operation.'}]),true);
+  for(const invalid of [{...base,kind:'gitlab_file',startLine:1,endLine:2},{...base,kind:'gitlab_tree',project:null,startLine:1,endLine:2},{kind:'dynatrace_logs',project:null,from:1,to:2,reason:'Invalid project field.'},{kind:'dynatrace_logs',from:1,to:2,filters:[{field:'service.name',value:'foreign'}],reason:'Invalid scope selector.'}])assert.equal(check([invalid]),false);
+});
+
+test('Codex nullable log filters restore legacy omission while exact selections survive host validation',async()=>{
+ for(const filters of [null,[{field:'http.route',value:'/api/requests'}]]){
+  const data=assessment();data.evidenceRequests=[{kind:'dynatrace_logs',from:1,to:2,filters,reason:'Inspect the exact operation.'}];const f=await fixture(output(events(data))),c=context();c.evidenceAcquisition={enabled:true};
+  try{const request=(await f.reasoner.investigate(c)).analysis.evidenceRequests[0];assert.equal(Object.hasOwn(request,'filters'),filters!==null);if(filters)assert.deepEqual(request.filters,filters);}finally{await f.close();}
+ }
+});
+
+test('Codex null project selection restores omission while explicit projects and invalid selectors reach host validation',async()=>{
+  for(const project of [null,'another/project',0]){
+    const data=assessment();data.evidenceRequests=[{kind:'gitlab_file',project,sha:'a'.repeat(40),path:'src/ledger/retry.py',startLine:1,endLine:2,reason:'Inspect the unchanged helper.'}];
+    const f=await fixture(output(events(data))),c=context();c.evidenceAcquisition={enabled:true};
+    try{
+      if(project===0)await assert.rejects(()=>f.reasoner.investigate(c),/requested source selector/);
+      else{const result=await f.reasoner.investigate(c),request=result.analysis.evidenceRequests[0];assert.equal(Object.hasOwn(request,'project'),project!==null);if(project!==null)assert.equal(request.project,project);}
+    }finally{await f.close();}
+  }
 });

@@ -1,7 +1,7 @@
 // A stale draft cannot answer a current request. Let the input burst settle,
 // then recover the request's earlier fair position once, without a retry loop
 // monopolizing admission. Only the host writes this scheduling metadata.
-export const requestFreshnessLimits=Object.freeze({quietMs:5000,maxWaitMs:60000,priorityRecoveries:1});
+export const requestFreshnessLimits=Object.freeze({quietMs:5000,maxWaitMs:120000,priorityRecoveries:1});
 const gateKey=id=>'agent-freshness-ready:'+id;
 const scheduleKey=id=>'agent-request-schedule:'+id;
 const integer=value=>Number.isSafeInteger(value)&&value>=0;

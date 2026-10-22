@@ -1,4 +1,6 @@
 import {readInvestigationLogs} from './dynatrace-log-investigation.mjs';
+import {readDiagnosticLogs} from './diagnostic-log-query.mjs';
+import {sourceDirectoryPath,validatedSourceInventory,sourceInventoryLimits} from './source-inventory.mjs';
 import { ApiClient, tokenProvider, tokenAuth } from './http-client.mjs';
 import { assertText } from './security.mjs';
 import { githubDeploymentStatus, gitlabDeploymentStatus } from './deployments.mjs';
@@ -8,6 +10,7 @@ import { configuredRetryDescriptor } from './provider-retry.mjs';
 import { ServiceNowMcpConnector } from './servicenow-mcp.mjs';
 import {providerChangeSnapshot,providerPipelineObservation} from './change-read.mjs';
 import {hash} from './security.mjs';
+import {discoveryConfiguration,discoveryProject as validDiscoveryProject,discoverySha,discoveryTag,sourceDiscoveryLimits} from './source-discovery-config.mjs';
 
 const enc=encodeURIComponent;
 const iso=(time)=>new Date(time).toISOString();
@@ -23,7 +26,7 @@ function sourceFile(data,path,sha,provider) {
   const decoded=Buffer.from(encoded,'base64');
   if(decoded.toString('base64')!==encoded)throw new Error('Noncanonical repository source encoding');
   if(decoded.length!==data.size||decoded.length>65536)throw new Error('Repository source byte count does not match metadata');
-  return {path,sha,content:new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(decoded),complete:true};
+  return {path,sha,content:new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(decoded),complete:true,...(provider==='gitlab'&&discoverySha(data.last_commit_id)?{lastCommitId:data.last_commit_id}:{})};
 }
 const expectedDeployment=proposal=>{
   const current=proposal?.current,id=current?.deploymentId??current?.id;
@@ -98,8 +101,43 @@ export class GitlabConnector extends ApiClient {
   constructor(config,options={}) {
     const token=tokenProvider(config,options.env,options.fetcher,{clock:options.clock,retryGate:options.oauthRetryGate});
     super({...options,base:config.base,auth:tokenAuth(token,{header:'private-token',prefix:''})});
-    this.project='/api/v4/projects/'+enc(String(config.project));this.config=config;this.clock=options.clock||Date.now;
+    this.fixedProject=config.project?'/api/v4/projects/'+enc(String(config.project)):null;this.config=config;this.clock=options.clock||Date.now;
   }
+  get project(){if(!this.fixedProject)throw Error('A verified fixed GitLab project is not configured; candidate discovery does not bind a runtime repository');return this.fixedProject;}
+  discoveryProject(project){const scope=discoveryConfiguration({gitlab:this.config});if(!scope?.projects.includes(project))throw Error('Project is outside the approved GitLab discovery boundary');return '/api/v4/projects/'+enc(project);}
+  async discoveryMetadata(project,{signal}={}){
+    const root=this.discoveryProject(project),data=await this.request(root,{signal});
+    if(!Number.isSafeInteger(data?.id)||data.id<1||!validDiscoveryProject(data.path_with_namespace)||!data.path_with_namespace.includes('/')||(/^\d+$/.test(project)?String(data.id)!==project:data.path_with_namespace!==project))throw Error('GitLab discovery project identity mismatch');return{project,id:String(data.id),path:data.path_with_namespace};
+  }
+  async discoveryRevision(project,ref,{signal}={}){
+    const root=this.discoveryProject(project),scope=discoveryConfiguration({gitlab:this.config});let revision=ref,kind='sha',tag;
+    if(!discoverySha(ref)){if(!scope.allowTags||!discoveryTag(ref))throw Error('A full reported SHA or explicitly allowed tag is required');tag=await this.request(root+'/repository/tags/'+enc(ref),{signal});if(tag?.name!==ref||!discoverySha(tag.commit?.id))throw Error('GitLab tag identity is unverified');revision=tag.commit.id;kind='tag';}
+    const commit=await this.request(root+'/repository/commits/'+fullSha(revision)+'?stats=false',{signal});if(commit?.id!==revision)throw Error('GitLab commit identity mismatch');
+    if(tag){const confirmed=await this.request(root+'/repository/tags/'+enc(ref),{signal});if(confirmed?.name!==ref||confirmed.commit?.id!==revision)throw Error('GitLab tag changed while its candidate revision was read');}
+    return{project,reportedRef:ref,kind,sha:revision,title:typeof commit.title==='string'?commit.title.slice(0,240):'',parents:Array.isArray(commit.parent_ids)?commit.parent_ids.filter(discoverySha).slice(0,4):[],parentCount:Array.isArray(commit.parent_ids)?commit.parent_ids.length:null,parentsComplete:Array.isArray(commit.parent_ids)&&commit.parent_ids.length<=4&&commit.parent_ids.every(parent=>discoverySha(parent)&&parent!==revision)&&new Set(commit.parent_ids).size===commit.parent_ids.length,interpretation:'A commit exists in an approved project; a resolved tag is a lookup observation, not an attested runtime or deployment.'};
+  }
+  async discoveryAncestry(project,ancestor,revision,{signal}={}){
+    const root=this.discoveryProject(project);if(!discoverySha(ancestor)||!discoverySha(revision))throw Error('Full immutable ancestry SHAs required');
+    const query=new URLSearchParams();query.append('refs[]',ancestor);query.append('refs[]',revision);const value=await this.request(root+'/repository/merge_base?'+query,{signal});if(!discoverySha(value?.id))throw Error('GitLab merge-base identity is unverified');return{project,ancestor,revision,mergeBase:value.id};
+  }
+  async discoveryComparison(project,baseSha,headSha,{signal}={}){
+    const root=this.discoveryProject(project);if(!discoverySha(baseSha)||!discoverySha(headSha))throw Error('Full immutable history comparison SHAs required');
+    const value=await this.request(root+'/repository/compare?from='+baseSha+'&to='+headSha+'&straight=true',{signal});if(value?.commit?.id!==headSha||!Array.isArray(value.diffs)||value.diffs.length>100)throw Error('GitLab history comparison identity or inventory is unverified');return{project,baseSha,headSha,timedOut:value.compare_timeout,files:value.diffs.map(item=>({oldPath:item?.old_path,newPath:item?.new_path,newFile:item?.new_file,deletedFile:item?.deleted_file,renamedFile:item?.renamed_file,diffAvailable:typeof item?.diff==='string'&&item.too_large!==true&&item.collapsed!==true}))};
+  }
+  async discoveryTree(project,revision,{signal}={}){
+    const root=this.discoveryProject(project);if(!discoverySha(revision))throw Error('Full immutable discovery SHA required');const result=await this.pages(root+'/repository/tree?ref='+revision+'&recursive=true',{signal,maxPages:sourceDiscoveryLimits.treePages,pageSize:sourceDiscoveryLimits.treePageSize}),entries=[];let invalidEntries=0;
+    for(const entry of result.items){try{repositoryPath(entry?.path);if(!discoverySha(entry.id)||!['tree','blob'].includes(entry.type)||entry.name!==entry.path.split('/').at(-1)||!['040000','100644','100755'].includes(entry.mode))throw Error();entries.push({id:entry.id,name:entry.name,type:entry.type,path:entry.path,mode:entry.mode});}catch{invalidEntries++;}}
+    return{project,sha:revision,entries,invalidEntries,complete:result.complete&&invalidEntries===0};
+  }
+  async #readDirectory(root,project,path,revision,{signal}={}){
+    if(!sourceDirectoryPath(path)||!discoverySha(revision))throw Error('A safe directory and full immutable revision are required');
+    const query=new URLSearchParams({ref:revision,recursive:'false'});if(path)query.set('path',path);
+    const result=await this.pages(root+'/repository/tree?'+query,{signal,maxPages:sourceInventoryLimits.pages,pageSize:sourceInventoryLimits.pageSize});
+    return validatedSourceInventory({project,sha:revision,path,recursive:false,entries:result.items,invalidEntries:0,complete:result.complete},{project,sha:revision,path});
+  }
+  async directory(path,revision,options={}){return this.#readDirectory(this.project,String(this.config.project),path,revision,options);}
+  async discoveryDirectory(project,path,revision,options={}){return this.#readDirectory(this.discoveryProject(project),project,path,revision,options);}
+  async discoveryFile(project,path,revision,{signal}={}){const root=this.discoveryProject(project);repositoryPath(path);if(!discoverySha(revision))throw Error('Full immutable discovery SHA required');return sourceFile(await this.request(root+'/repository/files/'+enc(path)+'?ref='+revision,{signal}),path,revision,'gitlab');}
   async mergeRequest(iid,{signal,expectedSha}={}) {
     if(!/^\d+$/.test(String(iid)))throw new Error('Invalid merge request IID');
     const [mergeRequest,diffs]=await Promise.all([this.request(this.project+'/merge_requests/'+iid,{signal}),this.pages(this.project+'/merge_requests/'+iid+'/diffs',{signal})]);
@@ -225,6 +263,7 @@ export class DynatraceConnector extends ApiClient {
     return {records,metadata,complete:records.length<200&&!partial};
   }
   investigationLogs(options){return readInvestigationLogs(this,options);}
+  diagnosticLogs(options){return readDiagnosticLogs(this,options);}
   logs({from,to,signal}={}) {
     if(!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(this.config.logField||''))throw new Error('Configure a Dynatrace service log field');
     return this.query('fetch logs | filter '+this.config.logField+' == '+JSON.stringify(this.config.logValue)+' | sort timestamp desc | limit 200',{from,to,signal});

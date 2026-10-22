@@ -1,10 +1,11 @@
 // Short database transactions serialize admission and account-wide backpressure.
 // Model calls run outside the transaction, bounded by durable slot/job leases.
 const policyKey='agent-scheduler-policy';
-export const investigatorSlots=['single-agent','agent-slot:1','agent-slot:2','agent-slot:3'];
+export const investigatorSlots=Object.freeze(['single-agent',...Array.from({length:7},(_,n)=>'agent-slot:'+(n+1))]);
+const activeSlotsSql='SELECT COUNT(*) AS count FROM sre_locks WHERE name IN ('+investigatorSlots.map(()=>'?').join(',')+') AND expires_at>?';
 
 export function investigatorLimit(value=1){
-  if(!Number.isInteger(value)||value<1||value>investigatorSlots.length)throw Error('Investigation concurrency must be an integer from 1 to 4');
+  if(!Number.isInteger(value)||value<1||value>investigatorSlots.length)throw Error('Investigation concurrency must be an integer from 1 to '+investigatorSlots.length);
   return value;
 }
 
@@ -24,7 +25,7 @@ export async function configureInvestigationScheduler(store){
     if(prior?.concurrency===store.investigationConcurrency)return;
     // A stopped/idle deployment may change capacity. An older idle process
     // fails its next admission if its configured capacity no longer agrees.
-    const [active]=await q("SELECT COUNT(*) AS count FROM sre_locks WHERE name IN ('single-agent','agent-slot:1','agent-slot:2','agent-slot:3') AND expires_at>?",[now]);
+    const [active]=await q(activeSlotsSql,[...investigatorSlots,now]);
     const [jobs]=await q("SELECT COUNT(*) AS count FROM sre_jobs WHERE status='running' AND lease_until>?",[now]);
     if(Number(active.count)||Number(jobs.count))throw Error('Stop active investigators before changing investigation concurrency');
     const value={version:1,concurrency:store.investigationConcurrency,previousConcurrency:prior?.concurrency??1};
@@ -37,7 +38,7 @@ export async function assertInvestigationScheduler(store,q){
   const policy=row?JSON.parse(row.value):null;
   if(!policy){
     const now=await store.coordinationNow(q);
-    const [active]=await q("SELECT COUNT(*) AS count FROM sre_locks WHERE name IN ('single-agent','agent-slot:1','agent-slot:2','agent-slot:3') AND expires_at>?",[now]);
+    const [active]=await q(activeSlotsSql,[...investigatorSlots,now]);
     if(store.investigationConcurrency>1&&Number(active.count))throw Error('Stop active investigators before changing investigation concurrency');
     await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?)',[policyKey,JSON.stringify({version:1,concurrency:store.investigationConcurrency,previousConcurrency:1}),now]);return;
   }

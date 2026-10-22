@@ -16,14 +16,25 @@ import {hash} from '../../src/sre/security.mjs';
 export const evaluationCliVersion='0.163.0-alpha.10.2';
 const disabled=['shell_tool','apps','plugins','remote_plugin','browser_use','browser_use_external','browser_use_full_cdp_access','in_app_browser','computer_use','image_generation','view_image','multi_agent','multi_agent_v2','memories','hooks','skill_search','sleep_tool','goals','tool_suggest','code_mode','code_mode_host'];
 const boundary='Code Mode is unavailable because code-mode host is disabled.';
+// This child investigates a supplied snapshot, rather than editing a checkout.
+// Use the documented instruction-file override to avoid a second, unrelated
+// coding-agent preamble. This file contains host instructions only, never input
+// evidence, credentials or deployment authority.
+export const codexInvestigationInstructions=investigationInstructions.replace('through StructuredOutput','as schema-conforming JSON')+'\nThis is a local Codex evaluation. Tool execution, including exec/wait wrappers, is intentionally unavailable. Do not call tools. Use only the supplied evidence. Do not refer to the model as Claude.';
 export function codexEvaluationEnvironment(env){
   const names=new Set(['PATH','HOME','USER','USERPROFILE','LOGNAME','TMPDIR','TMP','TEMP','SystemRoot','LANG','LC_ALL','TZ','CODEX_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','http_proxy','https_proxy','all_proxy','no_proxy','NODE_EXTRA_CA_CERTS','SSL_CERT_FILE','SSL_CERT_DIR']);
   return Object.fromEntries(Object.entries(env).filter(([key,value])=>names.has(key)&&typeof value==='string'));
 }
 export function codexEvaluationSchema(snapshot){
   const schema=claudeSchema(snapshot);
+  // The host's request variants have disjoint kind constants. OpenAI's strict
+  // subset accepts anyOf rather than oneOf, with every property required.
+  const requests=schema.properties.evidenceRequests.items;
+  requests.anyOf=requests.oneOf;delete requests.oneOf;
+  for(const variant of requests.anyOf){if(variant.properties.project)variant.properties.project.type=['string','null'];if(variant.properties.filters)variant.properties.filters.type=['array','null'];}
   const strict=node=>{
     if(!node||typeof node!=='object')return;
+    if(Object.hasOwn(node,'const')){node.type=typeof node.const;node.enum=[node.const];delete node.const;}
     if(node.type==='object'){node.additionalProperties=false;node.required=Object.keys(node.properties||{});}
     for(const child of Object.values(node))if(Array.isArray(child))child.forEach(strict);else strict(child);
   };
@@ -91,14 +102,14 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}){
 export class CodexEvaluationReasoner {
   constructor({command=process.env.SRE_CODEX_BIN||'codex',timeoutMs=180000,env=process.env}={}){
     if(typeof command!=='string'||!command.trim()||command.length>4096||/[\0\r\n]/.test(command)||!Number.isInteger(timeoutMs)||timeoutMs<100||timeoutMs>300000)throw Error('Invalid Codex evaluation CLI options');
-    this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium',citationProtocol:'snapshot-alias-v1',promptHash:hash(investigationInstructions)};this.env=env;
+    this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium',verbosity:'low',citationProtocol:'snapshot-alias-v1',promptHash:hash(codexInvestigationInstructions)};this.env=env;
   }
   async investigate(context,{question,requests,requestBatchVersion,signal,persistRemote}={}){
     question??=undefined;
     if(question!==undefined&&(typeof question!=='string'||question.length>4000))throw Error('Operator request must be text of at most 4000 characters');
     assertRequestBatch(requests,requestBatchVersion);
     if(signal?.aborted)throw Error('Codex evaluation cancelled');
-    const {command,model,effort,timeoutMs}=this.options,env=codexEvaluationEnvironment(this.env);
+    const {command,model,effort,verbosity,timeoutMs}=this.options,env=codexEvaluationEnvironment(this.env);
     const version=spawnSync(command,['--version'],{env,encoding:'utf8',timeout:10000,maxBuffer:4096});
     // The disabled Code Mode host behavior was checked on this exact CLI.
     // Reject other builds instead of assuming their tool registration matches.
@@ -111,10 +122,11 @@ export class CodexEvaluationReasoner {
     if(signal?.aborted)throw Error('Codex evaluation cancelled');
     const cwd=await mkdtemp(join(tmpdir(),'sre-codex-evaluation-'));
     try{
-      const path=join(cwd,'schema.json');await writeFile(path,JSON.stringify(schema),{mode:0o600});
+      const path=join(cwd,'schema.json'),instructionsPath=join(cwd,'instructions.txt');await writeFile(path,JSON.stringify(schema),{mode:0o600});
+      await writeFile(instructionsPath,codexInvestigationInstructions,{mode:0o600});
       const args=['exec','--strict-config','--ignore-user-config','--ignore-rules','--ephemeral','--sandbox','read-only','--skip-git-repo-check','--json','--output-schema',path,'--model',model,'--enable','code_mode_only'];
       for(const name of disabled)args.push('--disable',name);
-      for(const value of ['forced_login_method="chatgpt"','agents.enabled=false','web_search="disabled"','mcp_servers={}','tools.update_plan.enabled=false','tools.experimental_request_user_input.enabled=false','features.skip_host_skill_discovery=true','hide_agent_reasoning=true','show_raw_agent_reasoning=false','model_reasoning_effort='+JSON.stringify(effort),'project_doc_max_bytes=0','developer_instructions='+JSON.stringify(investigationInstructions+'\nThis is a local Codex evaluation. Tool execution, including exec/wait wrappers, is intentionally unavailable. Do not call tools. Use only the supplied evidence. Do not refer to the model as Claude.')])args.push('-c',value);
+      for(const value of ['forced_login_method="chatgpt"','agents.enabled=false','web_search="disabled"','mcp_servers={}','tools.update_plan.enabled=false','tools.experimental_request_user_input.enabled=false','features.skip_host_skill_discovery=true','hide_agent_reasoning=true','show_raw_agent_reasoning=false','model_reasoning_effort='+JSON.stringify(effort),'model_verbosity='+JSON.stringify(verbosity),'project_doc_max_bytes=0','developer_instructions=""','model_instructions_file='+JSON.stringify(instructionsPath)])args.push('-c',value);
       args.push('-');
       let checkpoint=Promise.resolve(),checkpointFailed=false;
       const onProgress=text=>{checkpoint=checkpoint.then(()=>persistRemote?.({provider:'codex-cli',invocationId,phase:'started',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,progress:{stage:'message',preview:text}})).catch(()=>{checkpointFailed=true;});};
@@ -123,8 +135,12 @@ export class CodexEvaluationReasoner {
       if(signal?.aborted)throw Error('Codex evaluation cancelled');
       const data=restore(result.data);
       if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!Object.hasOwn(investigationSchema.properties,key))||schema.required.some(key=>!Object.hasOwn(data,key)))throw Error('Codex investigation returned an unsupported output shape');
+      // Null means the optional fixed-project selector was omitted. Explicit
+      // project strings remain intact for the host's separate allowlist check.
+      for(const request of Array.isArray(data.evidenceRequests)?data.evidenceRequests:[])if(['gitlab_file','gitlab_tree'].includes(request?.kind)&&request.project===null)delete request.project;
+      for(const request of Array.isArray(data.evidenceRequests)?data.evidenceRequests:[])if(request?.kind==='dynatrace_logs'&&request.filters===null)delete request.filters;
       if(typeof data.summary!=='string'||!data.summary.trim()||[...data.summary].length>600)throw Error('Codex investigation summary must contain 1 to 600 characters');
-      const analysis={...validateInvestigation(data,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration,coverage:snapshot.coverage,signalDigest:snapshot.signalDigest}),mode:'codex'};
+      const analysis={...validateInvestigation(data,context,{deliveredContext:snapshot}),mode:'codex'};
       return {analysis,remoteState:{provider:'codex-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,usage:result.usage,transport:{...result.transport,inputHash:hash(input),inputBytes:Buffer.byteLength(input),snapshotBytes:Buffer.byteLength(JSON.stringify(wire)),schemaBytes:Buffer.byteLength(JSON.stringify(schema))}}};
     }finally{await rm(cwd,{recursive:true,force:true});}
   }

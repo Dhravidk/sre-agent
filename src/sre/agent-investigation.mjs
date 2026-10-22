@@ -1,5 +1,8 @@
 // The model proposes diagnoses and specifications. The host binds references
 // to the exact evidence it delivered; no field grants execution authority.
+import {deploymentBlockers,deploymentHistory} from './deployments.mjs';
+const compatibilityFields=['schemaVersion','dependencyFingerprint','configurationFingerprint','featureFlagsFingerprint'];
+const knownCompatibility=(field,value)=>typeof value==='string'&&value.trim().length>0||field==='schemaVersion'&&Number.isSafeInteger(value)&&value>=0;
 const text = (maxLength=2000) => ({type:'string',minLength:1,maxLength});
 const strings = (maxItems=10) => ({type:'array',items:text(),maxItems});
 export const agentInvestigationProperties = {
@@ -36,8 +39,10 @@ export function validateAgentInvestigation(data,context){
     const r=data.remediation;citations(r.evidenceIds);
     if(r.kind!=='rollback-candidate'&&r.targetSha!==null)throw Error('Agent rollback target is only valid for a rollback candidate');
     if(r.kind==='rollback-candidate'){
-      const current=context.deployments.find(d=>d.sha===data.candidateSha&&d.at<=context.incident.started_at),target=context.deployments.find(d=>d.sha===r.targetSha&&d.sha!==current?.sha&&d.at<current?.at&&d.healthy===true&&Number.isSafeInteger(d.healthVerifiedAt)&&d.healthVerifiedAt>=d.at&&d.healthVerifiedAt<=context.incident.started_at);
-      if(!current||!target||!['gitlab','github'].includes(current.provider)||current.rollbackCompatible!==true||current.dataRollbackSafe!==true||!current.environment||current.environment!==context.riskScope?.environment||['provider','environment','repository','project'].some(k=>current[k]!==target[k])||['schemaVersion','dependencyFingerprint','configurationFingerprint','featureFlagsFingerprint'].some(k=>current[k]===undefined||current[k]!==target[k])||[current,target].some(d=>!(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(d.sha||''))||!/^(?:[A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$/.test(d.artifact||'')))throw Error('Agent rollback candidate lacks matching healthy artifacts and verified compatibility');
+      const history=deploymentHistory(context.deployments).sort((a,b)=>b.at-a.at),current=history.find(d=>d.sha===data.candidateSha),target=history.find(d=>d.sha===r.targetSha&&d.sha!==current?.sha&&d.at<current?.at&&d.healthy===true&&Number.isSafeInteger(d.healthVerifiedAt)&&d.healthVerifiedAt>=d.at&&d.healthVerifiedAt<=context.incident.started_at);
+      if(!current||!target||!['gitlab','github'].includes(current.provider)||current.rollbackCompatible!==true||current.dataRollbackSafe!==true||!current.environment||current.environment!==context.riskScope?.environment||['provider','environment','repository','project'].some(k=>current[k]!==target[k])||compatibilityFields.some(k=>!knownCompatibility(k,current[k])||!knownCompatibility(k,target[k])||current[k]!==target[k])||[current,target].some(d=>!(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(d.sha||''))||!/^(?:[A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$/.test(d.artifact||'')))throw Error('Agent rollback candidate lacks matching healthy artifacts and verified compatibility');
+      const repository=current.provider==='gitlab'?current.project:current.repository;
+      if(data.changeAssessment!=='likely'||current.at>context.incident.started_at||typeof repository!=='string'||!repository.trim()||[current,target].some(d=>d.status!=='success'||!Number.isSafeInteger(d.at)||d.at<0)||deploymentBlockers(context.deployments,current).length||target.identityConflict||target.statusConflict||target.attestationConflicts?.length||target.historyIncomplete)throw Error('Agent rollback candidate has unverified or conflicting deployment identity/history');
     }
   }
   const rooms=new Set((context.collaboration?.rooms||[]).map(room=>room.key)),seen=new Set();

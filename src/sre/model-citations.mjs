@@ -39,6 +39,18 @@ export function citationTransport(snapshot){
 }
 
 export function investigationInvocationInput(snapshot,{question,requests}={}){
-  const transport=citationTransport(snapshot),input=JSON.stringify({...(requests?{requestBatch:requests}:{}),request:question||'Investigate this incident and explain impact, hypotheses, missing evidence and safe recovery options.',incident:transport.wire});
+  const transport=citationTransport(snapshot);
+  let batch=requests?{requestBatch:requests}:{};
+  if(requests?.length>1){
+    // Factor only byte-identical questions. Every job and destination remains
+    // explicit, in order; the persisted retry payload is never rewritten.
+    const counts=new Map();for(const request of requests)counts.set(request.question,(counts.get(request.question)||0)+1);
+    const questionTexts=[...counts].filter(([,count])=>count>1).map(([text])=>text),indices=new Map(questionTexts.map((text,index)=>[text,index]));
+    if(questionTexts.length){
+      const compact={questionTexts,requestBatch:requests.map(({question,...rest})=>indices.has(question)?{...rest,questionRef:indices.get(question)}:{...rest,question})};
+      if(Buffer.byteLength(JSON.stringify(compact))<Buffer.byteLength(JSON.stringify(batch)))batch=compact;
+    }
+  }
+  const input=JSON.stringify({...batch,request:question||'Investigate this incident and explain impact, hypotheses, missing evidence and safe recovery options.',incident:transport.wire});
   return {...transport,input};
 }

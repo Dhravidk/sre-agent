@@ -63,7 +63,7 @@ export function normalize(source,payload,service,{deliveryId,eventType,now=Date.
     throw new Error('Unsupported GitHub event');
   }
   if(source==='gitlab') {
-    if(String(payload.project?.id??payload.project_id)!==String(service.gitlab?.project))throw new Error('GitLab project is outside this service mapping');
+    if(!service.gitlab?.project||String(payload.project?.id??payload.project_id)!==String(service.gitlab.project))throw new Error('GitLab project is outside this service mapping');
     if(payload.object_kind==='pipeline') {
       const pipeline=payload.object_attributes;
       if(!pipeline?.sha)throw new Error('Pipeline event requires a SHA');
