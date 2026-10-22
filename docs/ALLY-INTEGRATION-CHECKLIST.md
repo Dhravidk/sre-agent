@@ -18,6 +18,8 @@ The [October 22 consolidation record](DYNATRACE-CONSOLIDATION.md) separates the 
 
 The [latency follow-up](DYNATRACE-LATENCY.md) records repeated actual-Codex surge runs and the explicit capacity experiment. Up to eight SQL-fenced investigators can now be configured; defaults remain one, or four in the development profile. Stop workers before changing capacity and validate concurrent CLI/resource usage on the approved route. This does not establish live Dynatrace/GitLab access or Claude performance while its account remains capped.
 
+The [first diagnosis milestone](DYNATRACE-GITLAB-DIAGNOSIS.md#observed-development-result-october-22-2026) passed 2,557 local tests and six authored real-Codex cases with targeted follow-ups and rollback/fix controls. Dependency/healthy source references remain citations rather than candidate defects. [Sanitized receipts](evidence/2026-10-22-dynatrace-gitlab-diagnosis.json) retain earlier failures and the timed-out window-only control; no paired speed or live vendor acceptance is claimed.
+
 ## External evidence sources
 
 The future collaboration prototype's saved-QA reader separates recorded execution state from the current assessment match, including same-revision reassessments. It shares the action guard's reviewed-facts fingerprint, preserves original result/event rows, and marks legacy or bounded/unavailable comparisons unverified. This local behavior does not accept an Ally QA executor, native Teams workflow or production fix. Verify representative enterprise assessment sizes and operator interpretation before using those history labels operationally; see [the contract](QA-EXECUTION.md).

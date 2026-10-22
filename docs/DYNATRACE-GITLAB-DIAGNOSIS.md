@@ -44,9 +44,30 @@ The workload uses six authored cases from the diagnostic corpus, actual generate
 
 Each initial 10,000-record input has 1% request-review witnesses among noisy ERROR/WARN instrumentation logs, with embedded untrusted deployment instructions. Detailed outcomes are absent from the initial snapshot. The real model must request additional records, compare exact releases, cite retrieved source where available, choose a supported recovery strategy and draft a developer specification. Author-only gold mechanisms, correction revisions and expected answers are excluded from model stdin.
 
-Dynatrace query execution and GitLab HTTP are mocked. Dependency probes and deployment/compatibility/health assertions are fictional. This is an authored development evaluation, not a held-out production benchmark, a live tenant trial or independent acceptance. Each code case uses one authored application module within its scoped project, with noisy instrumentation path hints; larger-repository localization remains a live evaluation task. Automatic checks cover locations, recovery class/target, attribution, follow-up citations, specification presence and persistence; free-form causal claims and test quality still need review.
+Dynatrace query execution and GitLab HTTP are mocked. Dependency probes and deployment/compatibility/health assertions are fictional. These cases informed the instruction changes and are reused during development. This is an authored development evaluation, not a held-out production benchmark, a live tenant trial or independent acceptance. Each code case uses one authored application module within its scoped project, with noisy instrumentation path hints; larger-repository localization remains a live evaluation task. Automatic checks cover locations, recovery class/target, attribution, follow-up citations, specification presence and persistence; free-form causal claims and test quality still need review.
 
 Private run directories retain exact inputs, validated responses, native timings/usage, provider selectors, SQL state, source/code-gold receipts and Markdown plans. A used directory is refused rather than silently replacing earlier failures. Reopening completed SQL is checked separately from actual inference.
+
+## Observed development result, October 22, 2026
+
+Runtime commit `e329d15` passed **2,557 tests**, zero failures/skips/cancellations, on Node 24.19.0 / pnpm 11.25.0 after frozen-lockfile installation. All 349 frozen source/configuration/fixture/script/test hashes matched after verification. The previous validator accepted matching null compatibility values in a negative reproduction; the updated validator rejected them.
+
+The final official Codex run requested `gpt-6.1-sol`, medium effort, CLI `0.163.0-alpha.10.2`: **12 validated model responses, six of six authored cases passing all eight case checks**, 60,000 initial log records with 1% request-review witnesses, and 10 targeted queries. Each case required two model invocations. Median invocation time was 37.75 seconds, maximum 47.98 seconds; this is not a production latency promise or a paired speed comparison.
+
+| Authored case | Observed result |
+| --- | --- |
+| Retry predicate admits terminal 422 responses | Exact predicate at lines 5–6; compatible historical rollback candidate and permanent selective-retry spec |
+| Concurrent event append records identity after awaiting a write | Exact await/cache insertion at lines 5–6; forward fix because schema/data rollback is incompatible |
+| Regional cache identity omits region | Exact key at line 4; forward fix, with null schema/configuration compatibility explicitly blocking rollback |
+| Cross-release 503s plus independent dependency probe assertions | Dependency mitigation, no candidate application finding and no rollback target |
+| Successful request controls on both releases | Collect evidence, no candidate application finding and no invented defect |
+| Observed-source HTTP 403, comparison diff still available | Qualified forward-fix proposal from diff/request evidence; no fabricated verified head-source location |
+
+Location checks matched the scoped project/revision source, and the Markdown plans retained developer tests and open questions. Reopening SQL preserved assessments and immutable plans without another model call. No Teams intake/delivery, fix execution or rollback occurred.
+
+Earlier runs are retained in the [sanitized receipts](evidence/2026-10-22-dynatrace-gitlab-diagnosis.json): an initial harness counter error; duplicate scheduling that prevented a complete six-case pass; and a real-model run whose recovery choices were correct but whose dependency/healthy controls still appeared in candidate finding arrays. The final instruction change reserves those arrays for implicated mechanisms and leaves controls in citations. The same scorer was retained. An optional window-only ablation timed out before an assessment at its 180-second deadline; it supplies no accuracy or latency comparison.
+
+The final 6/6 result is a development gate on cases used during implementation, not an independent diagnostic accuracy estimate. These cases use one application module per scoped project; larger-repository localization and real telemetry remain outstanding.
 
 ## Remaining live checks
 

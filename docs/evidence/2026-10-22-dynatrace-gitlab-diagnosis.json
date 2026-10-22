@@ -1,0 +1,407 @@
+{
+  "date": "2026-10-22",
+  "scope": "Actual official Codex CLI reasoning through IncidentWorker. Authored vendor transport, logs, health/compatibility assertions and generated source history; no live Dynatrace/GitLab acceptance. Cases are reused during development, not held-out.",
+  "runtimeCommit": "e329d156cd5cca5ba4e9db972fb4c7b575f2c742",
+  "source": {
+    "files": 349,
+    "aggregateSha256": "4d8375ae8f7b7ff27944d0767e4005515e958a9f2713040540b74711e0f60819",
+    "allMatchedAfterVerification": true
+  },
+  "tests": {
+    "node": "24.19.0",
+    "pnpm": "11.25.0",
+    "frozenLockfileInstall": true,
+    "baselinePassed": 2545,
+    "finalPassed": 2557,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 194741.856375
+  },
+  "negativeReproduction": {
+    "baselineCommit": "3cdcb280577988124c97d9a75cf1c6e32e23d687",
+    "matchingNullCompatibilityAcceptedBefore": true,
+    "matchingNullCompatibilityRejectedNow": true
+  },
+  "finalModel": {
+    "provider": "codex",
+    "cliVersion": "0.163.0-alpha.10.2",
+    "requestedModel": "gpt-6.1-sol",
+    "effort": "medium",
+    "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+    "calls": 12,
+    "validatedResponses": 12,
+    "casesPassed": 6,
+    "initialAuthoredRecords": 60000,
+    "initialRequestWitnessPercent": 1,
+    "authoredCodeStageChecksMatched": 18,
+    "targetedQueries": 10,
+    "medianInvocationMs": 37749.0,
+    "maximumInvocationMs": 47981,
+    "noExecution": true,
+    "noTeamsIntake": true,
+    "reopenPreserved": true,
+    "cases": [
+      {
+        "caseId": "case-01",
+        "status": "passed",
+        "calls": 2,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true
+        },
+        "changeAssessment": "likely",
+        "remediation": "rollback-candidate",
+        "sourceFindings": [
+          {
+            "path": "src/runtime/service.mjs",
+            "sha": "b62d29d1f8dc28580ca7bb8b11dcee1c27f28b6f",
+            "startLine": 2,
+            "endLine": 6
+          },
+          {
+            "path": "src/runtime/service.mjs",
+            "sha": "b62d29d1f8dc28580ca7bb8b11dcee1c27f28b6f",
+            "startLine": 5,
+            "endLine": 6
+          }
+        ],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "b62d29d1f8dc28580ca7bb8b11dcee1c27f28b6f"
+              }
+            ],
+            "complete": true,
+            "records": 3
+          },
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "fa0dad98eb45e673595acec188c59935a80d3fe2"
+              }
+            ],
+            "complete": true,
+            "records": 3
+          }
+        ],
+        "planId": "plan_40213d63883788b6cc2430ff"
+      },
+      {
+        "caseId": "case-02",
+        "status": "passed",
+        "calls": 2,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true
+        },
+        "changeAssessment": "likely",
+        "remediation": "forward-fix",
+        "sourceFindings": [
+          {
+            "path": "src/runtime/service.mjs",
+            "sha": "5927866a0e32ed02960325e3b4e9aa998b0a556b",
+            "startLine": 4,
+            "endLine": 6
+          },
+          {
+            "path": "src/runtime/service.mjs",
+            "sha": "5927866a0e32ed02960325e3b4e9aa998b0a556b",
+            "startLine": 5,
+            "endLine": 6
+          }
+        ],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "5927866a0e32ed02960325e3b4e9aa998b0a556b"
+              }
+            ],
+            "complete": true,
+            "records": 3
+          },
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "efc9fb621783427f5ffce44ad78552f62f570fb6"
+              }
+            ],
+            "complete": true,
+            "records": 3
+          }
+        ],
+        "planId": "plan_c8d2ae4070142ec6cf3414d2"
+      },
+      {
+        "caseId": "case-03",
+        "status": "passed",
+        "calls": 2,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true
+        },
+        "changeAssessment": "likely",
+        "remediation": "forward-fix",
+        "sourceFindings": [
+          {
+            "path": "src/runtime/service.mjs",
+            "sha": "3095c9cd2a2bad9b6ebfab0117e77b754effea80",
+            "startLine": 4,
+            "endLine": 6
+          },
+          {
+            "path": "src/runtime/service.mjs",
+            "sha": "3095c9cd2a2bad9b6ebfab0117e77b754effea80",
+            "startLine": 4,
+            "endLine": 4
+          }
+        ],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              }
+            ],
+            "complete": true,
+            "records": 6
+          }
+        ],
+        "planId": "plan_b763b22dbc75749be179783b"
+      },
+      {
+        "caseId": "case-04",
+        "status": "passed",
+        "calls": 2,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true
+        },
+        "changeAssessment": "unlikely",
+        "remediation": "dependency-mitigation",
+        "sourceFindings": [],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "f090de2e62fbe99c1eedda7781f3a1195ac71c19"
+              }
+            ],
+            "complete": true,
+            "records": 4
+          },
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "d74076f7f7672dd01b4420dd6c21c5585b86d2a5"
+              }
+            ],
+            "complete": true,
+            "records": 4
+          }
+        ],
+        "planId": "plan_8c1e5b953c95aa7f863a2d43"
+      },
+      {
+        "caseId": "case-05",
+        "status": "passed",
+        "calls": 2,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true
+        },
+        "changeAssessment": "unlikely",
+        "remediation": "collect-evidence",
+        "sourceFindings": [],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              }
+            ],
+            "complete": true,
+            "records": 6
+          }
+        ],
+        "planId": "plan_14bdf1e51fff840774542d14"
+      },
+      {
+        "caseId": "case-06",
+        "status": "passed",
+        "calls": 2,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true
+        },
+        "changeAssessment": "likely",
+        "remediation": "forward-fix",
+        "sourceFindings": [],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "e24ea8cb71d92c34953729d9621f3616d4399277"
+              }
+            ],
+            "complete": true,
+            "records": 3
+          },
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/api/requests"
+              },
+              {
+                "field": "service.version",
+                "value": "4ee22ab52a5908bc459c62fd80b7212edfb72535"
+              }
+            ],
+            "complete": true,
+            "records": 3
+          }
+        ],
+        "planId": "plan_12ebef6b1ee3a3a1475ad928"
+      }
+    ]
+  },
+  "developmentHistory": [
+    {
+      "run": "codex-preflight",
+      "status": "failed",
+      "calls": 2,
+      "validatedResponses": 2,
+      "automatedCasesPassed": 1,
+      "automatedCasesReported": 1,
+      "promptHash": "bb91fc64ff6eeb4653711473047695553378b8156ce45528c20f1ddf4781bfae",
+      "note": "Correct first diagnosis; run failed because the initial harness used a nonexistent Teams-counter table. Fixed the harness; not a model-quality pass for the whole run."
+    },
+    {
+      "run": "codex-six-cases",
+      "status": "failed",
+      "calls": 10,
+      "validatedResponses": 10,
+      "automatedCasesPassed": 2,
+      "automatedCasesReported": 6,
+      "promptHash": "bb91fc64ff6eeb4653711473047695553378b8156ce45528c20f1ddf4781bfae",
+      "note": "Incomplete evaluation: duplicate initial/question/deployment jobs replayed earlier incidents. Replaced intake with exact prior-poll deployment identities and one job per incident; added an offline regression. Not a six-case result."
+    },
+    {
+      "run": "codex-final",
+      "status": "failed",
+      "calls": 13,
+      "validatedResponses": 13,
+      "automatedCasesPassed": 4,
+      "automatedCasesReported": 6,
+      "promptHash": "bb91fc64ff6eeb4653711473047695553378b8156ce45528c20f1ddf4781bfae",
+      "note": "Four of six automatic case checks passed. All recovery classes/targets passed, but ordinary dependency/healthy control code appeared in candidate finding arrays. Tightened generic finding-versus-control instructions without changing the scorer."
+    },
+    {
+      "run": "codex-window-only",
+      "status": "failed",
+      "calls": 1,
+      "validatedResponses": 0,
+      "automatedCasesPassed": 0,
+      "automatedCasesReported": 1,
+      "promptHash": "bb91fc64ff6eeb4653711473047695553378b8156ce45528c20f1ddf4781bfae",
+      "note": "No assessment: native call exceeded 180-second deadline. Inconclusive ablation; cannot support an accuracy or latency comparison."
+    },
+    {
+      "run": "codex-candidate-findings",
+      "status": "passed",
+      "calls": 12,
+      "validatedResponses": 12,
+      "automatedCasesPassed": 6,
+      "automatedCasesReported": 6,
+      "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+      "note": "Final committed-runtime run. Six of six case checks passed, including no candidate findings for dependency/healthy controls and no verified location for denied source."
+    }
+  ],
+  "remaining": [
+    "Live read-only tenant DQL/auth/field/sampling/completeness validation and query-cost acceptance.",
+    "Actual runtime-to-GitLab project/commit/artifact binding and denied/ambiguous enterprise source cases.",
+    "Independent review of free-form causal explanations/specifications on representative sanitized real incidents.",
+    "Claude comparison when the approved route is available; no Claude acceptance inferred from Codex."
+  ],
+  "deferred": [
+    "Teams communication changes",
+    "Jira/ServiceNow/Confluence connector work",
+    "Deployment execution and external ticket/MR writes"
+  ]
+}
