@@ -1,3 +1,4 @@
+import {incompleteEvidence} from './evidence-completeness.mjs';
 export const likelihoodTerms=['unknown','almost no chance','very unlikely','unlikely','roughly even chance','likely','very likely','almost certain'];
 export const riskSchema={type:'object',additionalProperties:false,properties:{likelihood:{type:'string',enum:likelihoodTerms},likelihoodRationale:{type:'string'},confidence:{type:'string',enum:['low','moderate','high']},confidenceRationale:{type:'string'},impact:{type:'string'},assumptions:{type:'array',items:{type:'string'},maxItems:8},alternatives:{type:'array',items:{type:'string'},minItems:1,maxItems:8},contraryEvidenceIds:{type:'array',items:{type:'string'},maxItems:20},sourceQuality:{type:'array',items:{type:'object',additionalProperties:false,properties:{evidenceId:{type:'string'},limitations:{type:'string'}},required:['evidenceId','limitations']},maxItems:20},indicators:{type:'array',items:{type:'string'},minItems:1,maxItems:10},changeExplanation:{type:'string'}},required:['likelihood','likelihoodRationale','confidence','confidenceRationale','impact','assumptions','alternatives','contraryEvidenceIds','sourceQuality','indicators','changeExplanation']};
 
@@ -16,7 +17,7 @@ export function validateRisk(risk,context) {
   if(risk.contraryEvidenceIds.some(x=>!ids.has(x)))throw new Error('Contrary evidence is outside this incident');
   if(!Array.isArray(risk.sourceQuality)||risk.sourceQuality.length>20||risk.sourceQuality.some(x=>!ids.has(x.evidenceId)||typeof x.limitations!=='string'||!x.limitations.trim()||x.limitations.length>4000))throw new Error('Invalid source quality evidence');
   if(risk.likelihood!=='unknown'&&!risk.sourceQuality.length)throw new Error('A likelihood estimate requires an evidence quality assessment');
-  if(risk.confidence==='high'&&(risk.likelihood==='unknown'||context.evidence.some(x=>x.kind==='connector_error'||x.content?.complete===false||x.content?.policySources?.complete===false)))throw new Error('High confidence is unsupported with unknown likelihood, connector failures, or incomplete source comparisons');
+  if(risk.confidence==='high'&&(risk.likelihood==='unknown'||incompleteEvidence(context)))throw new Error('High confidence is unsupported with unknown likelihood or incomplete evidence coverage');
   return {...risk,scope:context.riskScope};
 }
 

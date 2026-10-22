@@ -38,6 +38,13 @@ test('Claude requires a recovery proposal in both its generation schema and its 
   finally{await f.close();}
 });
 
+test('host rejects high confidence after byte-window omissions even when a CLI bypasses its generation schema',async()=>{
+  const body=`const data=${JSON.stringify(analysis())};data.risk.likelihood='likely';data.risk.confidence='high';data.risk.sourceQuality=request.incident.evidence.slice(0,1).map(e=>({evidenceId:e.id,limitations:'The retained row is complete.'}));process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:data}));`;
+  const f=await fixture(body),c=context();c.evidence=Array.from({length:40},(_,n)=>({id:'complete-'+n,source:'source',kind:'observation',observed_at:Date.now(),content:{complete:true,text:'x'.repeat(6000)}}));
+  try{await assert.rejects(()=>f.reasoner.investigate(c),/High confidence/);const {request}=await f.read();assert.ok(request.incident.coverage.included<40);assert.ok(request.incident.evidence.every(e=>e.content.complete===true));}
+  finally{await f.close();}
+});
+
 test('Claude records bounded inference timing and schema retry counts without provider diagnostic contents',async()=>{
   const events=[
     {type:'assistant',message:{content:[{type:'text',text:'Reading scoped logs.'},{type:'tool_use',name:'StructuredOutput',id:'attempt-1',input:{private:'PRIVATE_TOOL_INPUT'}}]}},

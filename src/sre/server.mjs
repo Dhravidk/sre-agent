@@ -11,6 +11,7 @@ import { providerRetryGate } from './provider-retry.mjs';
 import { RulesReasoner, EveReasoner, boundedContext } from './reasoner.mjs';
 import { ClaudeReasoner } from './claude-reasoner.mjs';
 import { IncidentWorker } from './worker.mjs';
+import {investigationTimeBudgetMs} from './investigation-budget.mjs';
 import {InvestigationPool} from './investigation-pool.mjs';
 import { Rollbacks, assessRollback } from './rollback.mjs';
 import { TeamsRouter, TeamsOutbox, startSreTeams,incidentConversation } from './teams.mjs';
@@ -56,7 +57,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
     bridge=await startSreTeams({router,store,mode:config.teamsMode,env:config.env,host:config.host,port:Number(config.env.TEAMS_PORT||3978)});sender=bridge.sender;
   }
   const outbox=new TeamsOutbox({store,services:config.services,sender,casework,...deliveryOptions});
-  const operations=new OperationalMonitor({store,config,poller,outbox,schedulerEnabled:autoStart});
+  const operations=new OperationalMonitor({store,config,poller,outbox,schedulerEnabled:autoStart,investigationBudgetMs:['claude','codex'].includes(reasoner.mode)?investigationTimeBudgetMs(reasoner):0});
   const activeDeliveries=new Set();let deliveryError;
   let activeTick,activePoll,activeCommands,closePromise;let stopped=false;
   // A slow read-only model turn must not delay durable command acknowledgements.

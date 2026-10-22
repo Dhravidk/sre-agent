@@ -68,6 +68,6 @@ export class EveReasoner {
     try {result=await response.result();}
     catch(error) {await session.cancel().catch(()=>{});throw error;}
     if(result.status==='failed'||!result.data)throw new Error('The model investigation did not return a validated result');
-    return {analysis:{...validateInvestigation(result.data,context),mode:'eve'},remoteState:session.state};
+    return {analysis:{...validateInvestigation(result.data,{...context,coverage:modelContext.coverage,signalDigest:modelContext.signalDigest}),mode:'eve'},remoteState:session.state};
   }
 }

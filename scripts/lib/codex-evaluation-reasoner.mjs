@@ -120,7 +120,7 @@ export class CodexEvaluationReasoner {
       const data=result.data;
       if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!Object.hasOwn(investigationSchema.properties,key))||schema.required.some(key=>!Object.hasOwn(data,key)))throw Error('Codex investigation returned an unsupported output shape');
       if(typeof data.summary!=='string'||!data.summary.trim()||[...data.summary].length>600)throw Error('Codex investigation summary must contain 1 to 600 characters');
-      const analysis={...validateInvestigation(data,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration}),mode:'codex'};
+      const analysis={...validateInvestigation(data,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration,coverage:snapshot.coverage,signalDigest:snapshot.signalDigest}),mode:'codex'};
       return {analysis,remoteState:{provider:'codex-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,usage:result.usage}};
     }finally{await rm(cwd,{recursive:true,force:true});}
   }

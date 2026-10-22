@@ -1,5 +1,6 @@
 import {logIdentity} from './signal-digest.mjs';
 import {logRecordHash} from './log-observation.mjs';
+import {redact} from './security.mjs';
 
 // Data reduction only. No signature here identifies a particular application
 // defect or supplies a causal diagnosis; Claude must examine the evidence.
@@ -62,7 +63,15 @@ export function triageLogBatch(content){
     }
     group.observations++;
     if(at!==null){group.firstAt=group.firstAt===null?at:Math.min(group.firstAt,at);group.lastAt=group.lastAt===null?at:Math.max(group.lastAt,at);}
-    const item=sample(record);if(group.samples.length<logTriageLimits.samplesPerGroup)group.samples.push(item);else group.samples[1]=item;
+    const item=sample(record),index=group.samples.length<logTriageLimits.samplesPerGroup?group.samples.length:1;
+    group.samples[index]=item;
+    // Match the original retained, redacted record after shortening a sample.
+    // This metadata is for host deduplication, never an independent witness.
+    if(item!==record||group.sampleOrigins){
+      group.sampleOrigins??=Array(index).fill(null);
+      const original=redact(record,2);
+      group.sampleOrigins[index]=item===record?null:{recordHash:logRecordHash('dynatrace',original),signalKey:logIdentity(original,'dynatrace').key};
+    }
     forget(group);for(const ref of references)if(group.references.length<8&&!group.references.some(r=>r.path===ref.path&&r.line===ref.line))group.references.push(ref);remember(group);
     const aggregate=summaries.get(unique);if(aggregate&&group.serverAggregates.length<2)group.serverAggregates.push(aggregate);
   }

@@ -427,7 +427,7 @@ export class SreStore {
       const id=hash(['analysis',job.id]);
       const origin=job.payload.question?job.payload.conversationKey:null,replies=new Set(requiredReplyKeys(job.payload)),notice=notification.text??analysis.text,contactFormat=notification.contactFormat??'full';
       if(['claude','codex'].includes(analysis.mode)&&analysis.teamsMessages!==undefined){
-        await queueModelMessages(this,q,{job,analysis,previous,changed,id,replies});
+        await queueModelMessages(this,q,{job,analysis,previous,changed,id,replies,notice,contactFormat});
       }else if(changed&&!origin)await this.queueMessage(job.incident_id,notice,null,id,q,{broadcast:true,contacts:analysis.contacts,contactFormat});
       else {
         // Questions get a full answer only in their original conversation.

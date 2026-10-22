@@ -75,6 +75,7 @@ const priorRiskFields=['likelihood','likelihoodRationale','confidence','confiden
 function triageProjection(row,view,previous={}){
   let content=row.content;
   if(row.source!=='dynatrace'||row.kind!=='log_triage'||!content||typeof content!=='object')return content;
+  if(content.triage?.sampleOrigins){const {sampleOrigins,...triage}=content.triage;content={...content,triage};}
   if(content.sharedBatchContext){
     const shared=previous[content.sharedBatchContext];
     const {sharedBatchContext,...rest}=content;

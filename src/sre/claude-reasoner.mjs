@@ -10,6 +10,7 @@ import { investigationSchema,validateInvestigation } from './reasoner.mjs';
 import {ModelQuotaError} from './model-quota.mjs';
 import {claudeInvocationInput} from './model-citations.mjs';
 import {hash} from './security.mjs';
+import {incompleteEvidence} from './evidence-completeness.mjs';
 
 const outputLimit=1024*1024,stderrLimit=65536;
 const summaryLimit=600;
@@ -25,7 +26,7 @@ function providerFailure(result) {
 const claudeInvestigationSchema={...investigationSchema,required:[...investigationSchema.required,'codeFindings','remediation','issueSpec','teamsMessages'],properties:{...investigationSchema.properties,summary:{type:'string',minLength:1,maxLength:summaryLimit}}};
 export function claudeSchema(snapshot){
   const schema=structuredClone(claudeInvestigationSchema);
-  if(snapshot.evidence.some(row=>row.kind==='connector_error'||row.content?.synthetic===true||row.content?.complete===false||row.content?.policySources?.complete===false||row.content?.truncated===true))schema.properties.risk.properties.confidence.enum=['low','moderate'];
+  if(incompleteEvidence(snapshot))schema.properties.risk.properties.confidence.enum=['low','moderate'];
   // A manifest can mention retained pages or unseen citations. Only actual
   // delivered evidence rows may be referenced in the model's final object.
   const ids=[...new Set(snapshot.evidence.map(row=>row.id))],citation={type:'string',...(ids.length?{enum:ids}:{})};
@@ -148,7 +149,7 @@ export class ClaudeReasoner {
       if(Object.keys(data).some(key=>!allowed.includes(key))||claudeInvestigationSchema.required.some(key=>!Object.hasOwn(data,key)))throw new Error('Claude investigation returned an unsupported output shape');
       const restored=restore(data);
       if(typeof restored.summary!=='string'||!restored.summary.trim()||[...restored.summary].length>summaryLimit)throw new Error('Claude investigation summary must contain 1 to 600 characters');
-      const analysis={...validateInvestigation(restored,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration}),mode:'claude'};
+      const analysis={...validateInvestigation(restored,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration,coverage:snapshot.coverage,signalDigest:snapshot.signalDigest}),mode:'claude'};
       return {analysis,remoteState:{provider:'claude-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model??null,effort,transport:{...transport,inputBytes:Buffer.byteLength(input),snapshotBytes:Buffer.byteLength(JSON.stringify(wire)),inputHash:hash(input)}}};
     } finally {await rm(cwd,{recursive:true,force:true});}
   }

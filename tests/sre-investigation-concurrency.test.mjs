@@ -26,15 +26,16 @@ async function finish(store,job){return store.finish(job,analysis,null,Number((a
 
 for(const dialect of ['sqlite','postgres']){
   test(dialect+': database slots bound concurrent owners and keep each incident exclusive across restart',async()=>{
-    const db=await database(dialect),store=await new SreStore(db,{questionBatchLimit:8,investigationConcurrency:4}).initialize();
+    const services=[{key:'service',environment:'evaluation',teams:{tenantId:'evaluation',conversations:['hot']}}],options={questionBatchLimit:8,investigationConcurrency:4,services},db=await database(dialect),store=await new SreStore(db,options).initialize();
     try{
       const ids=await seed(store);
-      for(let n=0;n<20;n++)await store.ingest({id:'hot-'+n,source:'operator-api',serviceKey:'service',incidentId:ids[0],kind:'question',at:await store.coordinationNow(),payload:{text:'Noisy room question '+n},conversationKey:'hot'});
+      const hot=await store.rememberConversation({tenant:'evaluation',serviceKey:'service',reference:{serviceUrl:'https://delivery.invalid',conversation:{id:'hot'}}});await store.bindConversation(hot,ids[0]);
+      for(let n=0;n<20;n++)await store.ingest({id:'hot-'+n,source:'operator-api',serviceKey:'service',incidentId:ids[0],kind:'question',at:await store.coordinationNow(),payload:{text:'Noisy room question '+n},conversationKey:hot});
       const jobs=(await Promise.all(Array.from({length:5},(_,n)=>store.claim('owner-'+n)))).filter(Boolean);
       assert.equal(jobs.length,4);assert.equal(new Set(jobs.map(j=>j.incident_id)).size,4);
       assert.equal(new Set(jobs.map(j=>j.lease_name)).size,4);
       assert.equal(await store.claim(jobs[0].lease_owner),null,'an owner cannot occupy multiple slots');
-      const reopened=await new SreStore(db,{questionBatchLimit:8,investigationConcurrency:4}).initialize();
+      const reopened=await new SreStore(db,options).initialize();
       assert.equal(await reopened.claim('peer'),null);
       await assert.rejects(()=>new SreStore(db).initialize(),/Stop active investigators/);
       await reopened.heartbeat(jobs[2].lease_owner,jobs[2].id,60000,jobs[2].lease_name);

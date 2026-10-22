@@ -7,7 +7,7 @@ const materialKey=a=>hash({incidentStatus:a.incidentStatus,changeAssessment:a.ch
 
 // A checkpoint means queued, never delivered or acknowledged. Keep it through
 // retries/restarts so another model turn cannot manufacture a repeated notice.
-export async function queueModelMessages(store,q,{job,analysis,previous,changed,id,replies}){
+export async function queueModelMessages(store,q,{job,analysis,previous,changed,id,replies,notice,contactFormat}){
   if(!Array.isArray(analysis.teamsMessages)||analysis.teamsMessages.length>4)throw Error('Invalid agent message requests');
   const direct=new Set([...(job.payload.question?[job.payload.conversationKey]:[]),...(job.payload.requests||[]).map(r=>r.conversationKey),...replies].filter(Boolean)),destinations=new Set();
   for(const message of analysis.teamsMessages){
@@ -22,5 +22,16 @@ export async function queueModelMessages(store,q,{job,analysis,previous,changed,
     if(!direct.has(room.id)&&previousHash&&(previousHash===textHash||prior?.assessmentHash===assessmentHash||!prior?.assessmentHash&&!changed))continue;
     await store.queueMessage(job.incident_id,message.text,room.id,id+':agent:'+room.id,q);
     await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',[key,JSON.stringify({version:1,textHash,assessmentHash}),await store.coordinationNow(q)]);
+  }
+  // Model-selected wording is optional. A human's direct question and retained
+  // thread reply are independent obligations, including every batch member.
+  for(const roomKey of direct){
+    if(destinations.has(roomKey))continue;
+    const room=await store.authorizeIncidentConversation(roomKey,job.incident_id,q);
+    if(room.incident_id!==job.incident_id)throw Error('Reply destination no longer follows the incident');
+    const text=notice??analysis.text??analysis.summary;
+    if(typeof text!=='string'||!text.trim())throw Error('A direct request requires an assessment reply');
+    await store.queueMessage(job.incident_id,text,room.id,id+':agent:'+room.id,q,{contacts:analysis.contacts,contactFormat});
+    await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-message-last:'+job.incident_id+':'+room.id,JSON.stringify({version:1,textHash:hash(redact(text.trim())),assessmentHash:materialKey(analysis)}),await store.coordinationNow(q)]);
   }
 }

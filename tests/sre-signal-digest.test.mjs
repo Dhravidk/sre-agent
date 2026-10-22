@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {buildSignalDigest,selectSignalEvidence,signalDigestText,signalLimits} from '../src/sre/signal-digest.mjs';
 import {boundedContext,modelContextLimits} from '../src/sre/model-context.mjs';
 import {DynatraceConnector} from '../src/sre/connectors.mjs';
+import {retainLogBatch,retainLogTriage} from '../src/sre/log-triage.mjs';
+import {SreStore} from '../src/sre/store.mjs';
+import {sqliteDatabase} from '../src/sre/database.mjs';
 
 const now=Date.now(),a='a'.repeat(40),b='b'.repeat(40);
 const log=(i,fields={})=>({timestamp:new Date(now+i).toISOString(),content:'Credit timeout for request-'+String(i).padStart(8,'0'),requestId:'request-'+String(i).padStart(8,'0'),loglevel:'ERROR',errorCode:'CREDIT_TIMEOUT','service.name':'checkout',environment:'production',region:'eu',operation:'/checkout','service.version':b,...fields});
@@ -19,6 +22,18 @@ test('overlapping reads collapse observed signatures while environment, operatio
   assert.equal(primary.observations,120);assert.equal(primary.duplicateObservations,60);assert.equal(primary.deploymentMatches[0].sha,b);
   assert.ok(digest.groups.some(group=>group.message==='HTTP 500'));assert.ok(digest.groups.some(group=>group.message==='HTTP 503'));
   assert.equal(input[0].content.records[0].requestId,'request-00000000','aggregation must not rewrite raw records');
+});
+
+test('shortened triage samples preserve original raw identity in either scan order, including redaction and distinct omitted attributes',async()=>{
+  const store=await new SreStore(sqliteDatabase(':memory:')).initialize();
+  try{
+    const {incidentId}=await store.ingest({id:'long-log',source:'evaluation',serviceKey:'test',kind:'problem',issueKey:'long-log',status:'OPEN',at:now,payload:{}});
+    const first=log(1,{content:'Bearer fixture-only-value '+ 'same prefix '.repeat(260),customPayload:'a'.repeat(2500)}),second={...first,customPayload:'b'.repeat(2500)};
+    const content={records:[first,second],complete:true},raw=await retainLogBatch(store,incidentId,content),triage=await retainLogTriage(store,incidentId,raw,content),rows=await store.db.query('SELECT * FROM sre_evidence WHERE incident_id=?',[incidentId]);
+    const evidence=rows.map(r=>({...r,content:JSON.parse(r.content)}));assert.equal(triage.ids.length,1);assert.ok(evidence.find(r=>r.kind==='log_triage').content.records.every(r=>r.projectionTruncated));
+    for(const ordered of [evidence,[...evidence].reverse()]){const digest=buildSignalDigest({evidence:ordered});assert.equal(digest.groups.length,1);assert.equal(digest.groups[0].observations,2);assert.equal(digest.groups[0].duplicateObservations,2);assert.equal(digest.coverage.duplicateObservations,2);assert.deepEqual(new Set(digest.groups[0].evidenceIds),new Set([raw,...triage.ids]));}
+    const snapshot=boundedContext({incident:{id:incidentId},evidence,deployments:[]});assert.ok(snapshot.evidence.some(r=>r.kind==='log_triage'));assert.ok(snapshot.evidence.filter(r=>r.kind==='log_triage').every(r=>!Object.hasOwn(r.content.triage,'sampleOrigins')),'host identity bookkeeping must not add model tokens');
+  }finally{await store.db.close();}
 });
 
 test('an older rare error and current GitLab comparison survive informational noise in source selection',()=>{

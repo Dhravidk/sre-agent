@@ -9,13 +9,20 @@ async function database(dialect){
   const pg=new PGlite();
   return {dialect,query:async(sql,args=[])=>(await pg.query(postgresSql(sql),args)).rows,transaction:fn=>pg.transaction(tx=>fn(async(sql,args=[])=>(await tx.query(postgresSql(sql),args)).rows)),close:()=>pg.close()};
 }
+const serviceFor=rooms=>({key:'service',environment:'evaluation',teams:{tenantId:'evaluation',maxIncidentConversations:32,conversations:rooms,collaborationGroups:[{key:'shared',name:'Shared fixture',conversations:rooms.map(id=>({id,name:id}))}]}});
+async function bindRooms(store,incidentId,rooms){
+  const keys={};
+  for(const room of rooms){keys[room]=await store.rememberConversation({tenant:'evaluation',serviceKey:'service',reference:{serviceUrl:'https://delivery.invalid',conversation:{id:room}}});await store.bindConversation(keys[room],incidentId);}
+  return keys;
+}
 
 for(const dialect of ['sqlite','postgres']){
   test(dialect+': quiet groups beyond 128 older hot-group jobs enter the next bounded batches',async()=>{
-    const db=await database(dialect),store=await new SreStore(db,{questionBatchLimit:8}).initialize(),at=await store.coordinationNow();
+    const rooms=['hot-group',...Array.from({length:31},(_,n)=>'quiet-'+String(n).padStart(2,'0'))],db=await database(dialect),store=await new SreStore(db,{questionBatchLimit:8,services:[serviceFor(rooms)]}).initialize(),at=await store.coordinationNow();
     try{
       const id=(await store.ingest({id:'busy',source:'evaluation',serviceKey:'service',kind:'problem',issueKey:'busy',status:'OPEN',at,payload:{}})).incidentId;
-      const question=async(n,room)=>store.ingest({id:'q-'+n,source:'operator-api',serviceKey:'service',incidentId:id,kind:'question',at,payload:{text:'Question '+n},conversationKey:room});
+      const keys=await bindRooms(store,id,rooms),quietKeys=new Set(rooms.slice(1).map(room=>keys[room]));
+      const question=async(n,room)=>store.ingest({id:'q-'+n,source:'operator-api',serviceKey:'service',incidentId:id,kind:'question',at,payload:{text:'Question '+n},conversationKey:keys[room]});
       for(let n=0;n<160;n++)await question(n,'hot-group');
       for(let n=0;n<31;n++)await question(160+n,'quiet-'+String(n).padStart(2,'0'));
       const finish=async job=>store.finish(job,{summary:'Queue regression only',text:'Synthetic queue check',mode:'claude',teamsMessages:[]},null,Number((await store.context(id)).incident.revision));
@@ -23,7 +30,7 @@ for(const dialect of ['sqlite','postgres']){
       for(let turn=0;turn<5;turn++){
         const job=await store.claim('worker'),requests=job.payload.requests||[{question:job.payload.question,conversationKey:job.payload.conversationKey}];
         assert.ok(requests.length<=8);
-        const quiet=requests.filter(r=>r.conversationKey.startsWith('quiet-'));
+        const quiet=requests.filter(r=>quietKeys.has(r.conversationKey));
         if(turn===0)assert.equal(quiet.length,7,'older hot-group jobs must not hide every quiet group');
         for(const request of quiet)seen.add(request.conversationKey);
         await finish(job);
@@ -58,14 +65,15 @@ for(const dialect of ['sqlite','postgres']){
   });
 
   test(dialect+': batching preserves retry deadlines and the persisted batch across retry',async()=>{
-    const db=await database(dialect),store=await new SreStore(db,{questionBatchLimit:8}).initialize(),at=await store.coordinationNow();
+    const rooms=['hot','quiet','deferred'],db=await database(dialect),store=await new SreStore(db,{questionBatchLimit:8,services:[serviceFor(rooms)]}).initialize(),at=await store.coordinationNow();
     try{
       const id=(await store.ingest({id:'incident',source:'evaluation',serviceKey:'service',kind:'problem',issueKey:'incident',status:'OPEN',at,payload:{}})).incidentId;
+      const keys=await bindRooms(store,id,rooms);
       const finish=async job=>store.finish(job,{summary:'Queue only',text:'Queue only',mode:'claude',teamsMessages:[]},null,Number((await store.context(id)).incident.revision));
       await finish(await store.claim('worker'));
-      for(const [n,room]of ['hot','quiet','deferred'].entries())await store.ingest({id:'q-'+n,source:'operator-api',serviceKey:'service',incidentId:id,kind:'question',at,payload:{text:'Question '+n},conversationKey:room});
-      await db.query("UPDATE sre_jobs SET next_at=? WHERE payload LIKE ?",[at+3600000,'%deferred%']);
-      let job=await store.claim('worker');assert.deepEqual(new Set(job.payload.requests.map(r=>r.conversationKey)),new Set(['hot','quiet']));
+      for(const [n,room]of rooms.entries())await store.ingest({id:'q-'+n,source:'operator-api',serviceKey:'service',incidentId:id,kind:'question',at,payload:{text:'Question '+n},conversationKey:keys[room]});
+      await db.query("UPDATE sre_jobs SET next_at=? WHERE payload LIKE ?",[at+3600000,'%'+keys.deferred+'%']);
+      let job=await store.claim('worker');assert.deepEqual(new Set(job.payload.requests.map(r=>r.conversationKey)),new Set([keys.hot,keys.quiet]));
       const batch=job.payload.requests;await store.fail(job,Error('Transient provider error'));
       await db.query('UPDATE sre_jobs SET next_at=0 WHERE id=?',[job.id]);
       job=await store.claim('worker');assert.deepEqual(job.payload.requests,batch);await finish(job);

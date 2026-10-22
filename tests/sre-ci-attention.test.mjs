@@ -8,10 +8,24 @@ import {changeObservationNotices} from '../src/sre/change-observation-notices.mj
 import {StorageError} from '../src/sre/database.mjs';
 import {boundedContext} from '../src/sre/reasoner.mjs';
 import {exportDatabase,importDatabase} from '../src/sre/database-transfer.mjs';
+import {normalize} from '../src/sre/normalize.mjs';
 
 const seedFailures=async f=>{for(const id of [401,402,403,404])await f.ci(id,'failed');await f.settle();};
 const specificPeers=async(f,since,needle)=>{const notes=await f.notices(since);assert.equal(notes.length,2,'One notice for each joined group');for(const room of f.rooms.slice(0,2)){const[key]=await f.r.store.db.query('SELECT id FROM sre_conversations WHERE conversation_id=?',[room]);assert.ok(notes.some(note=>note.conversation_key===key.id&&note.text.includes(needle)),room+' must see the specific material update');}return notes;};
 for(const dialect of ['sqlite','postgres']){
+  test(dialect+': shared commit SHAs cannot transfer GitLab reserved CI totals to a GitHub PR or a foreign project/scope',async()=>{
+    const f=await webhookLoadFixture(dialect);try{
+      await seedFailures(f);await f.ci(405,'failed');f.service.github={base:'https://api.github.invalid',repository:'fixture/application',enabled:false};
+      await f.r.store.ingest(normalize('github',{repository:{full_name:f.service.github.repository},action:'synchronize',pull_request:{number:72,head:{sha:head},base:{sha:'b'.repeat(40)},updated_at:new Date().toISOString(),title:'Shared SHA is not shared CI'}},f.service,{eventType:'pull_request',deliveryId:'shared-sha-github'}));
+      await f.r.casework.trackChange(f.id,'github',72,{kind:'local-operator',id:'Fictional lead'});await f.settle();
+      const context=await f.r.store.context(f.id),changes=context.incident.analysis.observedChanges;
+      assert.equal(changes.find(c=>c.provider==='gitlab').ciAttention.adverse,5);assert.equal(changes.find(c=>c.provider==='github').ciAttention.adverse,0);assert.equal(changes.find(c=>c.provider==='github').ciOmitted.adverse,0);
+      const timeline=await f.r.casework.timeline(f.id,context),reservedOnly={...timeline,groups:[]};
+      const observed=async ciCoverage=>(await changeObservationNotices(f.r.store,context,f.service,{timeline:async()=>({...reservedOnly,ciCoverage})})).changes;
+      assert.equal((await observed(timeline.ciCoverage)).find(c=>c.provider==='gitlab').ciAttention.adverse,5,'matching reserved coverage retains its omitted totals');
+      for(const changed of [{...timeline.ciCoverage,project:'999'},{...timeline.ciCoverage,scopeHash:'0'.repeat(64)}])assert.ok((await observed(changed)).every(c=>c.ciAttention.adverse===0&&c.ciAttention.uncertain===0&&c.ciOmitted.other===0));
+    }finally{await f.close();}
+  });
   test(dialect+': a fifth failing run cannot disappear behind the three-run briefing budget',async()=>{
     const f=await webhookLoadFixture(dialect);try{
       await seedFailures(f);const before=await f.checkpoint(),other=(await f.r.store.context(f.other)).incident.revision;

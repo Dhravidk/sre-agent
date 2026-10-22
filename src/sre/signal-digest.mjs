@@ -55,9 +55,11 @@ export function buildSignalDigest({evidence=[],deployments=[],incident={},eviden
     if(batch.index>=batch.items.length||scanned>=signalLimits.records)continue;
     const recordIndex=batch.index,record=batch.items[batch.index++],row=batch.row,source=logSource(row,recordIndex);scanned++;
     if(!record||typeof record!=='object'||Array.isArray(record)){invalidRecords++;continue;}
-    const {identity,key,rank}=logIdentity(record,source),recordAt=stamp(record.timestamp??record.at);
+    const {identity,key:projectedKey,rank}=logIdentity(record,source),recordAt=stamp(record.timestamp??record.at);
+    const origin=row.kind==='log_triage'&&row.content?.hostDataReduction===true&&typeof row.content.derivedFrom==='string'?row.content.triage?.sampleOrigins?.[recordIndex]:null;
+    const boundOrigin=/^[a-f0-9]{64}$/.test(origin?.recordHash||'')&&/^[a-f0-9]{64}$/.test(origin?.signalKey||'')?origin:null,key=boundOrigin?.signalKey||projectedKey;
     if(recordAt===null)missingTimestamps++;
-    const unique=recordAt===null?null:logRecordHash(source,record);
+    const unique=recordAt===null?null:boundOrigin?.recordHash||logRecordHash(source,record);
     const group=groups.get(key)||{key,...Object.fromEntries(Object.entries(identity).map(([k,v])=>[k,short(v,k==='message'?220:100)])),rank,observations:0,duplicateObservations:0,firstAt:null,lastAt:null,evidenceIds:[]};
     if(!group.evidenceIds.includes(row.id)&&group.evidenceIds.length<4)group.evidenceIds.push(row.id);
     if(unique&&seen.has(unique)){duplicates++;group.duplicateObservations++;}

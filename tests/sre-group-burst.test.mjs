@@ -81,7 +81,7 @@ for(const {concurrent,expanded}of [{concurrent:false,expanded:false},{concurrent
     assert.equal(report.model,'test-double');assert.equal(report.status,'passed',JSON.stringify({checks:report.checks,cases:report.cases.map(c=>({case:c.case,checks:c.checks}))}));
     assert.equal(report.metrics.acceptedMessages,expanded?424:212);assert.equal(report.metrics.duplicateDeliveries,expanded?136:68);assert.equal(report.metrics.questions,suite.groups.length);assert.equal(report.metrics.publishedQuestionJobs,suite.groups.length);
     if(!concurrent)assert.ok(report.attempts.some(a=>a.jobStatus==='superseded'||a.jobStatus==='pending'),'new evidence must fence stale model publication');
-    if(concurrent){assert.equal(report.metrics.maxActive,4);assert.ok(report.metrics.questionPublicationP95Ms>=0);}
+    if(concurrent){assert.equal(report.metrics.maxActive,4);assert.ok(report.metrics.questionPublicationP95Ms>=0);assert.equal(report.parameters.workloadVersion,6);assert.equal(report.checks.allQuestionRepliesQueued,true);assert.equal(report.metrics.queuedQuestionReplies,suite.groups.length);}
     assert.equal(report.bursts.length,expanded?72:36);assert.equal(report.groups.filter(g=>g.answered===1).length,suite.groups.length);
     assert.ok(report.events.some(e=>e.type==='restart'));assert.equal(report.metrics.rollbacks,0);
     const before=calls,resumed=await evaluate({directory,reasoner});assert.equal(calls,before);assert.equal(resumed.status,'passed');assert.equal(resumed.attempts.length,report.attempts.length);

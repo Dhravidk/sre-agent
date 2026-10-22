@@ -54,7 +54,7 @@ export async function changeObservationNotices(store,context,service,casework){
     const overflow=identities.length>=5,heads=overflow?[]:[...new Set(identities.map(row=>row.head_sha).filter(sha))].sort();
     const headSha=!conflicting&&sha(fact.head_sha)?fact.head_sha:null;
     const project=/^[1-9]\d*$/.test(String(service.gitlab?.project))?String(service.gitlab.project):null;
-    const ciCoverage=timeline.ciCoverage?.scopeHash===pollScopeHash(service,'gitlab')&&timeline.ciCoverage?.heads.find(row=>row.headSha===headSha);
+    const ciCoverage=link.provider==='gitlab'&&project!==null&&timeline.ciCoverage?.project===project&&timeline.ciCoverage.scopeHash===pollScopeHash(service,'gitlab')&&timeline.ciCoverage.heads.find(row=>row.headSha===headSha);
     const matches=timeline.groups.filter(group=>headSha&&group.provider===link.provider&&group.stage==='ci-update'&&group.headSha===headSha&&group.relevance.kind==='linked-commit'&&group.relevance.references.some(ref=>ref.provider===link.provider&&ref.number===link.change_number&&ref.state==='linked')&&!(group.provider==='gitlab'&&project&&group.projectId!==null&&String(group.projectId)!==project)&&!(ciCoverage&&group.provider==='gitlab'&&group.scopeHash===timeline.ciCoverage.scopeHash&&!group.ciReserved));
     const runs=matches.map(group=>{
       // GitLab ingestion records its configured scope in a checked projection.

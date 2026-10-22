@@ -10,6 +10,7 @@ import {automaticAssociationAllowed,associationText} from './change-associations
 import {latestChangeState} from './change-read.mjs';
 import {assessmentBrief} from './assessment-brief.mjs';
 import {changeObservationNotices,observedChangeText} from './change-observation-notices.mjs';
+import {investigationTimeBudgetMs} from './investigation-budget.mjs';
 
 export class IncidentWorker {
   constructor({store,services,connectors,reasoner,casework,leaseMs=60000,restoreReadOnly=false}) {Object.assign(this,{store,services,connectors,reasoner,casework,leaseMs,restoreReadOnly});this.owner=randomUUID();this.running=false;}
@@ -105,7 +106,7 @@ export class IncidentWorker {
     // Grail collection can use 30 seconds before the separately bounded model
     // subprocess starts. Leave a minute for collection and persistence;
     // retain the existing shorter budget for non-model fixture workers.
-    const deadline=setTimeout(()=>controller.abort(new Error('Investigation time budget exceeded')),['claude','codex'].includes(this.reasoner?.mode)?(this.reasoner.options?.timeoutMs??180000)+60000:120000);
+    const deadline=setTimeout(()=>controller.abort(new Error('Investigation time budget exceeded')),investigationTimeBudgetMs(this.reasoner));
     try {
       if((await this.store.restoreFence())?.active&&!this.restoreReadOnly)return false;
       job=await this.store.claim(this.owner,this.leaseMs);if(!job)return false;

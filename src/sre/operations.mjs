@@ -26,8 +26,8 @@ export function operationalLimits(config) {
 }
 
 export class OperationalMonitor {
-  constructor({store,config,poller,outbox,schedulerEnabled=true}) {
-    Object.assign(this,{store,config,poller,outbox,schedulerEnabled});this.limits=operationalLimits(config);this.startedAt=store.clock();this.runtimeId=randomUUID();this.instanceId=config.instanceId||'agent';this.loops={tick:{running:false},poll:{running:false},commands:{running:false},...(outbox?{delivery:{running:false}}:{})};this.active=null;this.stopped=false;
+  constructor({store,config,poller,outbox,schedulerEnabled=true,investigationBudgetMs=0}) {
+    Object.assign(this,{store,config,poller,outbox,schedulerEnabled});this.limits=operationalLimits(config);this.tickLimitMs=investigationBudgetMs>0?Math.max(this.limits.maxTickDurationSeconds*1000,investigationBudgetMs+10000):this.limits.maxTickDurationSeconds*1000;this.startedAt=store.clock();this.runtimeId=randomUUID();this.instanceId=config.instanceId||'agent';this.loops={tick:{running:false},poll:{running:false},commands:{running:false},...(outbox?{delivery:{running:false}}:{})};this.active=null;this.stopped=false;
   }
   begin(lane) {Object.assign(this.loops[lane],{running:true,startedAt:this.store.clock(),lastStartedAt:this.store.clock()});}
   end(lane,error) {Object.assign(this.loops[lane],{running:false,lastFinishedAt:this.store.clock(),...(error?{error:redact(String(error.message)).slice(0,1000)}:{error:null,lastSuccessAt:this.store.clock()})});}
@@ -124,7 +124,7 @@ export class OperationalMonitor {
       if(row.status==='approved'&&coordinationNow-Number(row.oldest)>this.limits.maxQueueAgeSeconds*1000)add(row.service_key,key,'qa_delayed','Approved local QA is waiting beyond the configured queue age.',{count});
     }
     for(const [name,loop] of Object.entries(this.loops)) {
-      const limit=(name==='poll'?this.limits.maxPollDurationSeconds:this.limits.maxTickDurationSeconds)*1000;
+      const limit=name==='tick'?this.tickLimitMs:(name==='poll'?this.limits.maxPollDurationSeconds:this.limits.maxTickDurationSeconds)*1000;
       if(loop.error)add(null,'loop:'+name,'loop_error',name+' loop failed: '+loop.error);
       else if(loop.running&&now-loop.startedAt>limit)add(null,'loop:'+name,'loop_stalled',name+' loop has exceeded its configured execution time.');
       else if(this.schedulerEnabled&&!loop.running&&now-(loop.lastFinishedAt??this.startedAt)>Math.max(this.limits.startupGraceSeconds*1000,name==='poll'?(this.config.pollIntervalMs||60000)*3:5000))add(null,'loop:'+name,'loop_missing',name+' loop has stopped making progress.');
