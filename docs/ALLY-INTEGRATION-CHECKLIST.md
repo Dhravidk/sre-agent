@@ -20,7 +20,7 @@ The [latency follow-up](DYNATRACE-LATENCY.md) records repeated actual-Codex surg
 
 The [first diagnosis milestone](DYNATRACE-GITLAB-DIAGNOSIS.md#observed-development-result-october-22-2026) passed 2,557 local tests and six authored real-Codex cases with targeted follow-ups and rollback/fix controls. Dependency/healthy source references remain citations rather than candidate defects. [Sanitized receipts](evidence/2026-10-22-dynatrace-gitlab-diagnosis.json) retain earlier failures and the timed-out window-only control; no paired speed or live vendor acceptance is claimed.
 
-The [larger-repository follow-up](DYNATRACE-LARGE-REPOSITORIES.md) addresses initial source-budget exhaustion and separates two authored calibration mechanisms from five validation mechanisms in 1,200-file Git histories. Tenant DQL/auth/field/completeness, GitLab permissions/runtime bindings and independent real-incident acceptance remain outstanding; Teams and ticket-connector work stay deferred.
+The [larger-repository follow-up](DYNATRACE-LARGE-REPOSITORIES.md) addresses initial source-budget exhaustion and explicit fixed-project requests. The frozen runtime passed five new authored real-Codex validation cases in 1,200-file Git histories with 150,000 initial noisy records, plus 2,562 full-suite tests. [Receipts](evidence/2026-10-22-large-repo-diagnosis.json) separate calibration interruptions from the first-pass validation. Tenant DQL/auth/field/completeness, GitLab permissions/runtime bindings and independent real-incident acceptance remain outstanding; Teams and ticket-connector work stay deferred.
 
 ## External evidence sources
 
