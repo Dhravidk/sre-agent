@@ -21,6 +21,7 @@ import {ciReadState} from './ci-observations.mjs';
 import {recordContactMessage} from './contact-messages.mjs';
 import {handledDeliveryInspectionSql,projectDeliveryInspections,preparedDeliveryRecipient} from './delivery-inspections.mjs';
 import {routeWaitReason,alertConversationId} from './teams-routing.mjs';
+import {questionBatchLimits} from './question-batch-budget.mjs';
 
 const json = (value) => JSON.stringify(value);
 const parse = (value) => value ? JSON.parse(value) : null;
@@ -40,7 +41,7 @@ const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypot
 export const conversationKey = (tenant, id) => hash([tenant, id]).slice(0, 32);
 
 export class SreStore {
-  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1, investigationConcurrency = 1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>8)throw Error('Invalid question batch limit');this.questionBatchLimit=questionBatchLimit;this.investigationConcurrency=investigatorLimit(investigationConcurrency); }
+  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1, investigationConcurrency = 1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>questionBatchLimits.requests)throw Error('Invalid question batch limit');this.questionBatchLimit=questionBatchLimit;this.investigationConcurrency=investigatorLimit(investigationConcurrency); }
   async coordinationNow(query=this.db.query) {
     // PostgreSQL coordinates independent hosts. Its transaction-start timestamp
     // would remain stale across a lock wait, so read the live server clock.

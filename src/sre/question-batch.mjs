@@ -1,3 +1,5 @@
+import {questionBatchLimits,requestBatchBytes} from './question-batch-budget.mjs';
+
 // Coalesce inference, never intake. Every original event/job stays in SQL.
 // A persisted parent retains the complete bounded request batch across retry.
 export async function batchQuestions(q,job,payload,limit,{dialect='sqlite',now=Date.now()}={}){
@@ -18,10 +20,12 @@ export async function batchQuestions(q,job,payload,limit,{dialect='sqlite',now=D
     const fair=[...buckets].sort(([a],[b])=>(a===(payload.conversationKey||'')?1:0)-(b===(payload.conversationKey||'')?1:0));
     for(const [,bucket]of fair){
       if(!bucket.length||requests.length>=limit)continue;
-      const {row,payload:other}=bucket.shift();requests.push({jobId:row.id,question:other.question,conversationKey:other.conversationKey||null});
+      const {row,payload:other}=bucket.shift(),request={jobId:row.id,question:other.question,conversationKey:other.conversationKey||null};
+      if(requestBatchBytes([...requests,request])>questionBatchLimits.bytes)continue;
+      requests.push(request);
       await q("UPDATE sre_jobs SET status='superseded',payload=? WHERE id=? AND status='pending'",[JSON.stringify({...other,batchJobId:job.id}),row.id]);
     }
   }
   for(const key of new Set(requests.map(request=>request.conversationKey||'')))await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-room-scheduled:'+job.incident_id+':'+key,JSON.stringify({jobId:job.id}),now]);
-  return requests.length>1?{...payload,requests}:payload;
+  return requests.length>1?{...payload,requests,requestBatchVersion:2}:payload;
 }

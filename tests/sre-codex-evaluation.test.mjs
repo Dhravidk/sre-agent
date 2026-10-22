@@ -33,6 +33,12 @@ ${body}\n`,{mode:0o700});
   return {directory,record,reasoner:new CodexEvaluationReasoner({command,timeoutMs,env}),read:async()=>JSON.parse(await readFile(record,'utf8')),close:()=>rm(directory,{recursive:true,force:true})};
 }
 
+test('Codex delivers a complete 32-request batch and rejects excessive bytes before native startup',async()=>{
+  const f=await fixture(output(events(assessment()))),requests=Array.from({length:32},(_,n)=>({jobId:'job-'+n,question:'Review supported source and recovery '+n,conversationKey:null}));
+  try{await f.reasoner.investigate(context(),{requests});assert.deepEqual((await f.read()).input.requestBatch,requests);const before=(await f.read()).pid;await assert.rejects(()=>f.reasoner.investigate(context(),{requests:requests.map(r=>({...r,question:'界'.repeat(4000)}))}),/bounded/);assert.equal((await f.read()).pid,before);}
+  finally{await f.close();}
+});
+
 test('Codex evaluation uses a version-pinned official CLI, ChatGPT login, disabled execution host and bounded stdin',async()=>{
   const f=await fixture(output(events(assessment()))),states=[];
   try{

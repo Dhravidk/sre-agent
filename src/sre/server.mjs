@@ -12,6 +12,7 @@ import { RulesReasoner, EveReasoner, boundedContext } from './reasoner.mjs';
 import { ClaudeReasoner } from './claude-reasoner.mjs';
 import { IncidentWorker } from './worker.mjs';
 import {investigationTimeBudgetMs} from './investigation-budget.mjs';
+import {questionBatchLimits} from './question-batch-budget.mjs';
 import {InvestigationPool} from './investigation-pool.mjs';
 import { Rollbacks, assessRollback } from './rollback.mjs';
 import { TeamsRouter, TeamsOutbox, startSreTeams,incidentConversation } from './teams.mjs';
@@ -39,7 +40,7 @@ const bearer=(req)=>String(req.headers.authorization||'').replace(/^Bearer /,'')
 
 export async function createSreRuntime({config=loadConfig(),db,connectors,reasoner,sender,qaAdapter,deliveryOptions,autoStart=true}={}) {
   const simulation=isSimulationMode(config.mode);
-  const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services,questionBatchLimit:config.agentMode==='claude'?8:1,investigationConcurrency:config.investigationConcurrency??1}).initialize();
+  const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services,questionBatchLimit:config.agentMode==='claude'?questionBatchLimits.requests:1,investigationConcurrency:config.investigationConcurrency??1}).initialize();
   const secret=config.capabilitySecret||randomBytes(32).toString('hex');
   connectors ||= new Map(config.services.map(service=>[service.key,simulation?{}:createConnectors(service,{env:config.env,clock:()=>store.coordinationNow(),retryGateFactory:descriptor=>providerRetryGate(store,descriptor)})]));
   reasoner ||= config.agentMode==='claude'?new ClaudeReasoner({config,env:config.env}):config.agentMode==='eve'?new EveReasoner({host:config.env.EVE_URL,token:config.env.EVE_TOKEN,capabilitySecret:secret}):new RulesReasoner();

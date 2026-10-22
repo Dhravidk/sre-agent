@@ -1,6 +1,7 @@
 // Explicit local development alternative, never selected by production config.
 // Uses the official CLI's saved ChatGPT login; no OAuth token/API forwarding.
 import {spawn,spawnSync} from 'node:child_process';
+import {assertRequestBatch} from '../../src/sre/question-batch-budget.mjs';
 import {randomUUID} from 'node:crypto';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -88,10 +89,10 @@ export class CodexEvaluationReasoner {
     if(typeof command!=='string'||!command.trim()||command.length>4096||/[\0\r\n]/.test(command)||!Number.isInteger(timeoutMs)||timeoutMs<100||timeoutMs>300000)throw Error('Invalid Codex evaluation CLI options');
     this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium'};this.env=env;
   }
-  async investigate(context,{question,requests,signal,persistRemote}={}){
+  async investigate(context,{question,requests,requestBatchVersion,signal,persistRemote}={}){
     question??=undefined;
     if(question!==undefined&&(typeof question!=='string'||question.length>4000))throw Error('Operator request must be text of at most 4000 characters');
-    if(requests!==undefined&&(!Array.isArray(requests)||requests.length>8||requests.some(r=>typeof r.question!=='string'||r.question.length>4000||typeof r.jobId!=='string')))throw Error('Invalid bounded investigation request batch');
+    assertRequestBatch(requests,requestBatchVersion);
     if(signal?.aborted)throw Error('Codex evaluation cancelled');
     const {command,model,effort,timeoutMs}=this.options,env=codexEvaluationEnvironment(this.env);
     const version=spawnSync(command,['--version'],{env,encoding:'utf8',timeout:10000,maxBuffer:4096});

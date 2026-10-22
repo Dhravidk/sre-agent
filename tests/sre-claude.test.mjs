@@ -38,6 +38,12 @@ test('Claude requires a recovery proposal in both its generation schema and its 
   finally{await f.close();}
 });
 
+test('Claude delivers all 32 short requests and rejects excessive bytes before starting a child',async()=>{
+  const f=await fixture(`process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:${JSON.stringify(analysis())}}));`),requests=Array.from({length:32},(_,n)=>({jobId:'job-'+n,question:'Inspect this scoped question '+n,conversationKey:null}));
+  try{await f.reasoner.investigate(context(),{requests});assert.deepEqual((await f.read()).request.requestBatch,requests);const before=(await f.read()).pid;await assert.rejects(()=>f.reasoner.investigate(context(),{requests:requests.map(r=>({...r,question:'界'.repeat(4000)}))}),/bounded/);assert.equal((await f.read()).pid,before);}
+  finally{await f.close();}
+});
+
 test('host rejects high confidence after byte-window omissions even when a CLI bypasses its generation schema',async()=>{
   const body=`const data=${JSON.stringify(analysis())};data.risk.likelihood='likely';data.risk.confidence='high';data.risk.sourceQuality=request.incident.evidence.slice(0,1).map(e=>({evidenceId:e.id,limitations:'The retained row is complete.'}));process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:data}));`;
   const f=await fixture(body),c=context();c.evidence=Array.from({length:40},(_,n)=>({id:'complete-'+n,source:'source',kind:'observation',observed_at:Date.now(),content:{complete:true,text:'x'.repeat(6000)}}));

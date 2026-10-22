@@ -115,7 +115,7 @@ export class IncidentWorker {
       await this.collect(initial,controller.signal);
       const context=await this.store.context(job.incident_id);
       context.riskScope=riskScope(context,this.services.find(x=>x.key===context.incident.service_key),await this.store.coordinationNow());
-      const result=await this.reasoner.investigate(context,{question:job.payload.question,requests:job.payload.requests,signal:controller.signal,persistRemote:state=>this.store.setRemoteState(job.incident_id,state,job)});
+      const result=await this.reasoner.investigate(context,{question:job.payload.question,requests:job.payload.requests,requestBatchVersion:job.payload.requestBatchVersion??1,signal:controller.signal,persistRemote:state=>this.store.setRemoteState(job.incident_id,state,job)});
       result.analysis.incidentStatus=context.incident.status;
       if(controller.signal.aborted)throw controller.signal.reason;
       const service=this.services.find(x=>x.key===context.incident.service_key);

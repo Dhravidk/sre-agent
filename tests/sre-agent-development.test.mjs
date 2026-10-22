@@ -100,7 +100,7 @@ for(const dialect of ['sqlite','postgres'])test(dialect+': question batching ret
 });
 
 test('32 groups and 256 questions drain through bounded actual CLI subprocess batches with durable restart',async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'sre-agent-load-')),command=join(directory,'claude-fixture'),record=join(directory,'calls.jsonl');let runtime,calls=0;
+  const directory=await mkdtemp(join(tmpdir(),'sre-agent-load-')),command=join(directory,'claude-fixture'),record=join(directory,'calls.jsonl');let runtime;
   const body=`#!${process.execPath}\nimport {appendFileSync} from 'node:fs';let input='';for await(const chunk of process.stdin)input+=chunk;const request=JSON.parse(input),c=request.incident;appendFileSync(${JSON.stringify(record)},JSON.stringify({incidentId:c.incident.id,requests:request.requestBatch||[],bytes:Buffer.byteLength(input)})+'\\n');const risk={likelihood:'unknown',likelihoodRationale:'Recorded evaluation only.',confidence:'low',confidenceRationale:'No production validation.',impact:'Service impact is being investigated.',assumptions:[],alternatives:['Independent dependency failure.'],contraryEvidenceIds:[],sourceQuality:[],indicators:['Inspect actual errors.'],changeExplanation:'New bounded evidence reviewed.'};process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{summary:'Bounded incident analysis.',hypotheses:[],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live validation pending.'],nextSteps:['Review source.'],risk,codeFindings:[],teamsMessages:[],remediation:{kind:'collect-evidence',targetSha:null,rationale:'Transport fixture only.',evidenceIds:[],verificationSteps:['Verify independently.'],blockingUnknowns:['No real model used.']},issueSpec:{title:'Review load test',problem:'Fictional workload.',impact:'Test only.',proposedChange:'Review.',acceptanceCriteria:['Check evidence.'],evidenceIds:[],openQuestions:['Live validation pending.']}}})+'\\n');`;
   await writeFile(command,body,{mode:0o700});
   const config=()=>{const c=loadConfig({SRE_CONFIG:'config/sre.agent.json',SRE_SQLITE_PATH:join(directory,'db.sqlite')});const s=c.services[0];s.teams.conversations=Array.from({length:32},(_,n)=>'group-'+n);s.teams.collaborationGroups[0].conversations=s.teams.conversations.map(id=>({id,name:id}));c.env={...process.env,SRE_CLAUDE_BIN:command};return c;};
@@ -114,12 +114,14 @@ test('32 groups and 256 questions drain through bounded actual CLI subprocess ba
       const room=service.teams.conversations[n%32],event={id:'load-'+n,source:'teams-question',serviceKey:service.key,incidentId:id,kind:'question',at:now,payload:{text:'Question '+n+': correlate current failures with the source.',conversationId:room,userId:'person-'+(n%32)},conversationKey:conversationKey(service.teams.tenantId,room)};
       await runtime.store.ingest(event);if(n%17===0)assert.equal((await runtime.store.ingest(event)).duplicate,true);
     }
-    assert.equal(await runtime.worker.runOnce(),true);calls++;
+    // Stop refill after this wave; reopen with queued work instead of racing
+    // cancellation of a newly started subprocess in the load assertion.
+    const first=runtime.worker.runOnce();runtime.worker.pause?.();assert.equal(await first,true);
     await runtime.close();runtime=await open();
-    for(let n=0;n<40;n++){if(!await runtime.worker.runOnce())break;calls++;}
+    for(let n=0;n<40;n++){const ran=await runtime.worker.runOnce();await runtime.worker.idle?.();if(!ran)break;}
     const rows=await runtime.store.db.query('SELECT status,payload FROM sre_jobs');assert.ok(rows.every(r=>['done','superseded'].includes(r.status)),JSON.stringify(rows.filter(r=>!['done','superseded'].includes(r.status))));
     const records=(await readFile(record,'utf8')).trim().split('\n').map(JSON.parse),requests=records.flatMap(r=>r.requests);
-    assert.equal(records.length,32);assert.equal(calls,32);assert.equal(requests.length,256);assert.equal(new Set(requests.map(r=>r.jobId)).size,256);assert.ok(records.every(r=>r.requests.length<=8&&r.bytes<200000));
+    assert.equal(records.length,8);assert.equal(requests.length,256);assert.equal(new Set(requests.map(r=>r.jobId)).size,256);assert.ok(records.every(r=>r.requests.length<=32&&Buffer.byteLength(JSON.stringify(r.requests))<=32768&&r.bytes<200000));
     const context=await runtime.store.context(id);assert.equal(context.incident.analysis.mode,'claude');assert.equal(context.assessmentStatus.state,'current');assert.equal(context.collaboration.rooms.length,32);assert.equal(context.incident.status,'open');
     assert.equal(Number((await runtime.store.db.query('SELECT COUNT(*) AS count FROM sre_rollbacks'))[0].count),0);
   }finally{await runtime?.close();await rm(directory,{recursive:true,force:true});}

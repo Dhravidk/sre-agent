@@ -11,6 +11,7 @@ import {ModelQuotaError} from './model-quota.mjs';
 import {claudeInvocationInput} from './model-citations.mjs';
 import {hash} from './security.mjs';
 import {incompleteEvidence} from './evidence-completeness.mjs';
+import {assertRequestBatch} from './question-batch-budget.mjs';
 
 const outputLimit=1024*1024,stderrLimit=65536;
 const summaryLimit=600;
@@ -113,12 +114,12 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}) {
 
 export class ClaudeReasoner {
   constructor({config={},env=process.env}={}) {this.mode='claude';this.options=claudeOptions(config,env);this.env=env;}
-  async investigate(context,{question,requests,signal,persistRemote}={}) {
+  async investigate(context,{question,requests,requestBatchVersion,signal,persistRemote}={}) {
     question??=undefined;
     if(question!==undefined&&(typeof question!=='string'||question.length>4000))throw new Error('Operator request must be text of at most 4000 characters');
     if(signal?.aborted)throw new Error('Claude investigation cancelled');
     const snapshot=boundedContext(context);
-    if(requests!==undefined&&(!Array.isArray(requests)||requests.length>8||requests.some(r=>typeof r.question!=='string'||r.question.length>4000||typeof r.jobId!=='string')))throw Error('Invalid bounded investigation request batch');
+    assertRequestBatch(requests,requestBatchVersion);
     const invocationId=randomUUID(),{input,wire,restore}=claudeInvocationInput(snapshot,{question,requests});
     if(Buffer.byteLength(JSON.stringify(wire))>modelContextLimits.totalBytes)throw Error('Claude citation projection exceeds the snapshot budget');
     const {command,model,effort,timeoutMs,bare,maxBudgetUsd}=this.options;
