@@ -238,3 +238,38 @@ pnpm sre:groups:eval --live --provider codex --surge --directory .local/YOUR-NEW
 ```
 
 Stop older investigator binaries before rollout. The new SQL gates and saved priority metadata provide scheduling history, never health, source freshness, approval or execution authority. The original full-suite baseline passed 1,476 tests before edits. Focused SQLite/PGlite tests cover settling/restart, continuous arrivals, duplicates, source clock skew, one-time priority, ordinary retry deadlines, expired owners, forged intake metadata, quota/restore holds, preserved business witnesses and larger-profile harness behavior.
+
+The frozen scheduling checkpoint `e551c22` passed **1,488 tests**, zero failures/skips, with all **259** source/configuration/script/fixture/test/package hashes matching through native completion. The fresh 64-group control used the same seed, 30,000-record source populations, 72 four-second bursts, 64 hot updates per burst, four slots, prompt, requested model and strict oracle as the preceding run. Official Codex CLI `0.163.0-alpha.10.2`, requested `gpt-6.1-sol / medium`, completed **42/42 actual investigations**; all 20 current final cases passed file/SHA/line, attribution, recovery/target, citation and issue-specification checks.
+
+| Question-publication metric | Previous 64-group run | New 64-group control |
+| --- | ---: | ---: |
+| Busy incident p95 / maximum | 7.05 min | 6.39 min |
+| Other 19 incidents p95 | 2.76 min | 2.40 min |
+| Overall p50 | 2.50 min | 2.33 min |
+| Overall p95 | 6.92 min | 6.25 min |
+| Median actual investigation | 37.83 s | 34.22 s |
+
+The busy p95 fell **9.4%**, while the other incidents' p95 fell **13.2%**. These are separate native runs with variable provider/cache/host timing, not an isolated causal estimate or production SLO. The busiest question parent recovered its earlier priority once. Three hot-incident drafts, including one started at the settling cap before the flood ended, still became stale and could not publish; the busy response followed producer completion by 99.29 seconds. The run used one more investigation than the previous control, so it does not establish reduced model work.
+
+All **4,744 messages** were retained, **136** replayed deliveries deduplicated, and **4,764 jobs** drained across 64 groups, 20 incidents, 16 source scopes and **477,772 authored record entries**. All 64 questions have exact matching published assessments and pending scoped replies; independent SQL checks verified complete fallback assessment content in every reply. First-pass fairness, quieter publication during the flood, database-wide capacity/peer exclusion, request count/bytes, scope, restart and all 42 delivered-input/source-payload receipts passed. Drained reopen made **zero new model calls** and preserved the checked incidents/revisions/analyses, jobs/payloads/attempts/deadlines, all agent checkpoints including freshness/request metadata, assessments and outbox.
+
+PR review also identified that the GitLab CI scope predicate incorrectly cleared repository-checked GitHub CI outcomes. A separate follow-up restores GitHub's normalized repository scope, retains finish-only/version uncertainty, and keeps GitLab project/provider/scope coverage isolated. SQLite/PGlite regressions cover adverse outcomes, a newer passing observation, foreign-repository rejection, and a failing GitLab run sharing the commit. The control above remains attributed to its earlier immutable code checkpoint.
+
+The final runtime checkpoint `91e9297` passed **1,490 tests**, zero failures/skips; all 259 source hashes matched before the larger native trials. The first 90-group surge used 30 incidents across six namespaces, 24 source scopes and **1,078,854 authored record entries**. It retained **7,091 messages**, deduplicated **162** replayed deliveries and drained all **7,121 jobs**. All 90 questions received matching complete scoped replies, all 30 current final cases passed, and all **52 returned assessments** passed the strict oracle. However, one additional Codex invocation exceeded its **180-second** budget, so the original trial remains **incomplete**, with `noModelFailures:false`. Its later current investigation passed; a returned assessment does not explain the earlier stall. The original timeout and artifacts remain retained.
+
+The planned quiescent restart waited for that active call before reopening SQL. Busy publication p95/maximum was **7.45 minutes**, other incidents' p95 **5.54 minutes**, and overall p95 **7.26 minutes**, including that interruption. These results do not demonstrate a faster 90-group workload or failure-free inference. All other gates passed, including first-pass fairness, quieter publication during the flood, bounded capacity/bytes, scope, restart, complete replies and queue drain. Drained reopen made zero calls and preserved the checked state. The authoritative success gate was not changed to accept the timeout.
+
+A fresh 90-group repeat on the same `91e9297` runtime passed **53/53 actual-Codex investigations**, every strict judgment, all **30 current final cases** and every original success gate. It kept the seed, corpus size, turbulent profile, prompt/model/effort, fixed cadence, concurrency and oracle unchanged. All **7,091 messages** and **162** duplicate replays were accounted for; all **7,121 jobs** drained (**47 done / 7,074 superseded**). All **90 questions** have exact matching published assessments and **90 pending scoped replies**. Independent SQL checks verified the full source/recovery/specification assessment in every fallback reply.
+
+| Fresh 90-group repeat metric | Observed value |
+| --- | ---: |
+| Busy incident publication p95 / maximum (32 questions) | 5.87 min |
+| Other 29 incidents publication p95 (58 questions) | 3.96 min |
+| Overall publication / queued-reply p50 | 3.73 min |
+| Overall publication / queued-reply p95 | 5.67 min |
+| Median actual investigation | 35.41 s |
+| Local SQL intake p95 / maximum | 0.48 / 7.56 ms |
+
+The busy parent recovered priority once and published 68.02 seconds after the 283.96-second producer finished. Four-slot capacity and peer exclusion, first-pass fairness, quieter publication during the flood, request scope/bytes, controlled restart and all **53** exact delivered-input/immutable-source receipts passed. Maximum batch size was **32 requests / 11,841 bytes**, within the separate 32 KiB limit. Median native input/output usage was **33,044 / 1,385 tokens**. All 259 source hashes still matched the 1,490-test checkpoint after completion. Drained reopen made **zero new model calls** and preserved the checked state, including all agent scheduling/freshness checkpoints.
+
+The successful repeat does not remove the first trial's timeout or identify its cause. The 90-group profile differs from the 64-group control, and its 30 incidents repeat five decision classes across six namespaces; do not infer a speedup ratio, novel-defect coverage or a production SLO from these separate runs. This turn used Codex as requested, made no fresh Claude probe and did not resume the held Claude queue. Larger current-prompt Claude verification and live vendor/HTTP/Teams/enterprise acceptance remain open. Authored evidence, finite local SQL bursts and queued replies do not establish human receipt or deployment/recovery execution.
