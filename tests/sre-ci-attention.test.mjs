@@ -11,6 +11,25 @@ import {exportDatabase,importDatabase} from '../src/sre/database-transfer.mjs';
 import {normalize} from '../src/sre/normalize.mjs';
 
 const seedFailures=async f=>{for(const id of [401,402,403,404])await f.ci(id,'failed');await f.settle();};
+for(const dialect of ['sqlite','postgres'])test(dialect+': repository-scoped GitHub CI keeps its own versioned outcomes and finish-only uncertainty',async()=>{
+ const f=await webhookLoadFixture(dialect);
+ try{
+  f.service.github={base:'https://api.github.invalid',repository:'fixture/application',enabled:false};
+  await f.r.store.ingest(normalize('github',{repository:{full_name:f.service.github.repository},action:'synchronize',pull_request:{number:72,head:{sha:head},base:{sha:'b'.repeat(40)},updated_at:new Date().toISOString(),title:'Repository-scoped CI fixture'}},f.service,{eventType:'pull_request',deliveryId:'github-ci-pr'}));
+  await f.r.casework.trackChange(f.id,'github',72,{kind:'local-operator',id:'Fictional lead'});await f.settle();
+  await f.ci(901,'failed');await f.settle();
+  const since=await f.checkpoint(),at=Date.now()-1000;
+  const update=async(type,id,conclusion,versioned=true,offset=0)=>f.r.store.ingest(normalize('github',{repository:{full_name:f.service.github.repository},action:'completed',[type]:{id,head_sha:head,status:'completed',conclusion,url:'https://api.github.invalid/repos/fixture/application/'+type+'/'+id,...(versioned?{updated_at:new Date(at+offset).toISOString()}:{completed_at:new Date(at+offset).toISOString()})}},f.service,{eventType:type,deliveryId:'github-'+type+'-'+id+'-'+offset}));
+  await update('check_suite',801,'failure');await update('workflow_run',802,'timed_out');await update('check_run',803,'failure',false);await f.settle();
+  const change=(await f.analysis()).observedChanges.find(c=>c.provider==='github'),suite=change.ci.find(c=>c.id==='801'),workflow=change.ci.find(c=>c.id==='802'),finish=change.ci.find(c=>c.id==='803');
+  assert.equal(suite.state,'observed-version');assert.equal(suite.status,'failure');assert.equal(workflow.status,'timed_out');assert.equal(finish.state,'unversioned');assert.equal(finish.status,null);assert.equal(change.ciAttention.adverse,2);assert.equal(change.ciAttention.uncertain,1);
+  assert.ok((await f.notices(since)).some(n=>n.text.includes('CI resource 801 failure')));assert.ok(!change.ci.some(c=>c.state==='scope-unknown'));assert.equal((await f.r.store.context(f.id)).incident.status,'open');
+  await update('check_suite',801,'success',true,10);await f.settle();const after=(await f.analysis()).observedChanges.find(c=>c.provider==='github');assert.equal(after.ci.find(c=>c.id==='801').status,'success');assert.equal(after.ciAttention.adverse,1);
+  const [before]=await f.r.store.db.query('SELECT COUNT(*) AS count FROM sre_events');
+  assert.throws(()=>normalize('github',{repository:{full_name:'foreign/application'},check_suite:{id:900,head_sha:head}},f.service,{eventType:'check_suite',deliveryId:'foreign-ci'}),/outside this service mapping/);
+  assert.equal((await f.r.store.db.query('SELECT COUNT(*) AS count FROM sre_events'))[0].count,before.count);
+ }finally{await f.close();}
+});
 const specificPeers=async(f,since,needle)=>{const notes=await f.notices(since);assert.equal(notes.length,2,'One notice for each joined group');for(const room of f.rooms.slice(0,2)){const[key]=await f.r.store.db.query('SELECT id FROM sre_conversations WHERE conversation_id=?',[room]);assert.ok(notes.some(note=>note.conversation_key===key.id&&note.text.includes(needle)),room+' must see the specific material update');}return notes;};
 for(const dialect of ['sqlite','postgres']){
   test(dialect+': shared commit SHAs cannot transfer GitLab reserved CI totals to a GitHub PR or a foreign project/scope',async()=>{

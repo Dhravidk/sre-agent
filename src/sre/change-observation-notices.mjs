@@ -57,9 +57,10 @@ export async function changeObservationNotices(store,context,service,casework){
     const ciCoverage=link.provider==='gitlab'&&project!==null&&timeline.ciCoverage?.project===project&&timeline.ciCoverage.scopeHash===pollScopeHash(service,'gitlab')&&timeline.ciCoverage.heads.find(row=>row.headSha===headSha);
     const matches=timeline.groups.filter(group=>headSha&&group.provider===link.provider&&group.stage==='ci-update'&&group.headSha===headSha&&group.relevance.kind==='linked-commit'&&group.relevance.references.some(ref=>ref.provider===link.provider&&ref.number===link.change_number&&ref.state==='linked')&&!(group.provider==='gitlab'&&project&&group.projectId!==null&&String(group.projectId)!==project)&&!(ciCoverage&&group.provider==='gitlab'&&group.scopeHash===timeline.ciCoverage.scopeHash&&!group.ciReserved));
     const runs=matches.map(group=>{
-      // GitLab ingestion records its configured scope in a checked projection.
-      // An old unscoped webhook cannot acquire that proof retrospectively.
-      const scoped=group.provider==='gitlab'&&group.scopeHash===pollScopeHash(service,'gitlab')&&Number.isSafeInteger(group.projectId)&&String(group.projectId)===String(service.gitlab?.project);
+      // GitHub normalization already checks the configured repository. GitLab
+      // additionally requires its checked project/scope projection; an old
+      // unscoped GitLab webhook cannot acquire that proof retrospectively.
+      const scoped=group.provider==='github'||group.provider==='gitlab'&&group.scopeHash===pollScopeHash(service,'gitlab')&&Number.isSafeInteger(group.projectId)&&String(group.projectId)===String(service.gitlab?.project);
       const latestSources=group.latest.at===null?group.sources:group.sources.filter(source=>source.timeKind==='updated'&&source.sourceAt===group.latest.at);
       const historical=Boolean(fence&&latestSources.some(source=>source.recordedBeforeRestore));
       const state=historical?'historical':!scoped?'scope-unknown':group.unversionedCount?'unversioned':group.latest.state==='conflicting'?'conflicting':timeline.limited&&!group.ciVersionChecked?'coverage-limited':group.latest.state;
