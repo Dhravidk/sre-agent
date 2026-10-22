@@ -7,6 +7,7 @@ import {InvestigationPool} from '../../src/sre/investigation-pool.mjs';
 import {CodexEvaluationReasoner} from './codex-evaluation-reasoner.mjs';
 import {ClaudeReasoner} from '../../src/sre/claude-reasoner.mjs';
 import {boundedContext} from '../../src/sre/model-context.mjs';
+import {claudeInvocationInput} from '../../src/sre/model-citations.mjs';
 import {issueSpecMarkdown,remediationText} from '../../src/sre/agent-investigation.mjs';
 import {hash} from '../../src/sre/security.mjs';
 import {fixtureIncidentConnectors} from '../../fixtures/messy-dynatrace-incidents.mjs';
@@ -17,7 +18,7 @@ const scope='Bounded concurrent IncidentWorkers with durable database slots and 
 const percentile=(values,p)=>values.length?[...values].sort((a,b)=>a-b)[Math.ceil(values.length*p)-1]:null;
 const stem=a=>String(a.number).padStart(3,'0')+'-'+a.case;
 
-export async function runConcurrentGroupEvaluation({directory,seed=91573,recordsPerService=30000,concurrency=4,burstIntervalMs=4000,hotUpdates=64,maxTurns=60,reasoner=new ClaudeReasoner(),onEvent=()=>{}}){
+export async function runConcurrentGroupEvaluation({directory,seed=91573,recordsPerService=30000,concurrency=4,burstIntervalMs=4000,hotUpdates=64,maxTurns=60,expanded,reasoner=new ClaudeReasoner(),onEvent=()=>{}}){
   if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4||!Number.isInteger(burstIntervalMs)||burstIntervalMs<1||burstIntervalMs>10000||!Number.isInteger(hotUpdates)||hotUpdates<1||hotUpdates>256)throw Error('Invalid concurrent evaluation budget');
   await mkdir(join(directory,'attempts'),{recursive:true,mode:0o700});
   const read=async name=>{try{return JSON.parse(await readFile(join(directory,name),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;return null;}};
@@ -25,8 +26,9 @@ export async function runConcurrentGroupEvaluation({directory,seed=91573,records
   const inference={requestedModel:reasoner.options?.model??null,effort:reasoner.options?.effort??null,timeoutMs:reasoner.options?.timeoutMs??null};
   if(!['claude','codex'].includes(reasonerMode))throw Error('Unsupported evaluation reasoner mode');
   let parameters=await read('fixture.json');
-  if(!parameters){parameters={workloadVersion:4,executionModel:model,reasonerMode,inference,seed,recordsPerService,now:Date.now(),concurrency,burstIntervalMs,hotUpdates,burstCount:36};await writeFile(join(directory,'fixture.json'),JSON.stringify(parameters,null,2)+'\n',{mode:0o600});}
-  if(parameters.workloadVersion!==4)throw Error('Earlier workload contract: preserve that directory and select --legacy or a fresh directory for version 4');
+  if(!parameters){parameters={workloadVersion:expanded?5:4,executionModel:model,reasonerMode,inference,seed,recordsPerService,now:Date.now(),concurrency,burstIntervalMs,hotUpdates,burstCount:expanded?72:36,...(expanded?{cohorts:4,hotRooms:26,messiness:'saturated'}:{})};await writeFile(join(directory,'fixture.json'),JSON.stringify(parameters,null,2)+'\n',{mode:0o600});}
+  if(![4,5].includes(parameters.workloadVersion))throw Error('Earlier workload contract: preserve that directory and select --legacy or a fresh directory for version 4/5');
+  if(expanded!==undefined&&Boolean(expanded)!==(parameters.workloadVersion===5))throw Error('An evaluation directory cannot change its workload scale/noise profile; use a fresh directory');
   if(parameters.executionModel!==model||parameters.reasonerMode!==reasonerMode)throw Error('An evaluation directory cannot change model providers or test-double identity');
   if(parameters.concurrency!==concurrency)throw Error('An evaluation directory cannot change concurrency; use a fresh directory');
   if(JSON.stringify(parameters.inference)!==JSON.stringify(inference))throw Error('An evaluation directory cannot change its requested model, effort or timeout; use a fresh directory');
@@ -51,6 +53,12 @@ export async function runConcurrentGroupEvaluation({directory,seed=91573,records
     const attempt={number:attempts.length+1,case:c.id,incidentId:context.incident.id,jobId:job.id,requests:requests.map(r=>({jobId:r.jobId,roomKey:r.conversationKey||null})),snapshotBytes:Buffer.byteLength(JSON.stringify(snapshot)),startedAt:Date.now(),status:'running'};
     attempts.push(attempt);active++;activeIncidents.add(context.incident.id);maxActive=Math.max(maxActive,active);
     await writeFile(join(directory,'attempts',stem(attempt)+'-input.json'),JSON.stringify({scope,request:options.question,requestBatch:options.requests,incident:snapshot},null,2)+'\n',{mode:0o600});
+    if(model==='actual-claude'){
+      const wire=claudeInvocationInput(snapshot,options);
+      await writeFile(join(directory,'attempts',stem(attempt)+'-wire.json'),wire.input,{mode:0o600});
+      await writeFile(join(directory,'attempts',stem(attempt)+'-citations.json'),JSON.stringify(wire.bindings,null,2)+'\n',{mode:0o600});
+      attempt.inputHash=hash(wire.input);
+    }
     await event({type:'model-start',number:attempt.number,case:c.id,requests:requests.length,active});
     try{
       if(!peerExcluded){
@@ -63,6 +71,8 @@ export async function runConcurrentGroupEvaluation({directory,seed=91573,records
         finally{options.signal?.removeEventListener('abort',abort);}
       }
       const result=await reasoner.investigate(context,options);
+      if(result.remoteState?.transport)attempt.transport=result.remoteState.transport;
+      if(model==='actual-claude'&&attempt.inputHash!==result.remoteState?.transport?.inputHash)throw Error('Recorded Claude input differs from delivered input');
       await writeFile(join(directory,'attempts',stem(attempt)+'-result.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600});
       const checks=scoreMessyAssessment(c,{...context,incident:{...context.incident,analysis:result.analysis},assessmentStatus:{state:'current'}},snapshot,{mode:reasonerMode});delete checks.current;
       attempt.verdict=checks;attempt.requestScope=requests.every(r=>(context.collaboration?.rooms||[]).some(room=>room.key===r.conversationKey));attempt.status='validated';return result;

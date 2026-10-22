@@ -10,6 +10,15 @@ export async function bindSourceEvidence({provider,comparisonKind,baseSha,headSh
   const changedNames=new Set(changed.map(name)),referenced=[...priorities.keys()].filter(p=>!changedNames.has(p)).slice(0,2).map(p=>({path:p,referenceOnly:true}));
   const selected=[...changed,...referenced].sort((a,b)=>(priorities.get(name(a))??Infinity)-(priorities.get(name(b))??Infinity)).slice(0,sourceEvidenceLimits.files),selectedChanges=selected.filter(f=>!f.referenceOnly);
   const proof={provider,comparisonKind,baseSha,headSha,complete:Boolean(complete),sourceFiles:[],sourceCoverage:{available:changed.length,selected:selected.length,omitted:Math.max(0,changed.length-selectedChanges.length),referencedOutsideComparison:selected.length-selectedChanges.length,errors:[]},comparison:{files:selectedChanges.map(f=>({path:name(f),diff:String(f.patch||f.diff||'').slice(0,sourceEvidenceLimits.diffCharacters)}))}};
+  // Keep only the discovered review number, not unbounded provider metadata.
+  // The collector uses this identity to follow later heads through casework.
+  if(comparisonKind==='review'){
+    const number=provider==='github'?data.review?.pull?.number:data.mergeRequest?.iid;
+    if(Number.isSafeInteger(number)&&number>0){
+      if(provider==='github')proof.comparison.review={pull:{number}};
+      else if(provider==='gitlab')proof.comparison.mergeRequest={iid:number};
+    }
+  }
   if(!sha(baseSha)||!sha(headSha)||!complete||typeof client.file!=='function'){
     proof.sourceCoverage.errors.push('A complete comparison, immutable base/head and source reader are required.');return proof;
   }

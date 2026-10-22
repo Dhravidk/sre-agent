@@ -26,6 +26,15 @@ test('a source-backed Claude diagnosis drafts an actionable spec for an unfamili
   const c=sample(),result=validateInvestigation(analysis(c),c);
   assert.match(result.text,/session-cache\.mjs:2/);assert.match(issueSpecMarkdown(result.issueSpec),/59 seconds/);
 });
+
+test('a source finding can name deployed faulty code without attributing introduction to an unlikely or unknown change',()=>{
+  const c=sample(),sha='a'.repeat(40);c.deployments=[{sha,at:c.incident.started_at-1}];
+  const data=analysis(c);data.candidateSha=sha;
+  for(const judgment of ['unlikely','unknown']){data.changeAssessment=judgment;assert.throws(()=>validateInvestigation(data,c),/requires likely change attribution/);}
+  data.changeAssessment='likely';assert.equal(validateInvestigation(data,c).candidateSha,sha);
+  data.changeAssessment='unlikely';data.candidateSha=null;const result=validateInvestigation(data,c);
+  assert.equal(result.candidateSha,null);assert.equal(result.codeFindings[0].sha,sha);
+});
 for(const [label,mutate]of [
  ['invented file',d=>d.codeFindings[0].path='services/missing.mjs'],
  ['moving ref',d=>d.codeFindings[0].sha='main'],
@@ -92,7 +101,7 @@ for(const dialect of ['sqlite','postgres'])test(dialect+': question batching ret
 
 test('32 groups and 256 questions drain through bounded actual CLI subprocess batches with durable restart',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'sre-agent-load-')),command=join(directory,'claude-fixture'),record=join(directory,'calls.jsonl');let runtime,calls=0;
-  const body=`#!${process.execPath}\nimport {appendFileSync} from 'node:fs';let input='';for await(const chunk of process.stdin)input+=chunk;const request=JSON.parse(input),c=request.incident;appendFileSync(${JSON.stringify(record)},JSON.stringify({incidentId:c.incident.id,requests:request.requestBatch||[],bytes:Buffer.byteLength(input)})+'\\n');const risk={likelihood:'unknown',likelihoodRationale:'Recorded evaluation only.',confidence:'low',confidenceRationale:'No production validation.',impact:'Service impact is being investigated.',assumptions:[],alternatives:['Independent dependency failure.'],contraryEvidenceIds:[],sourceQuality:[],indicators:['Inspect actual errors.'],changeExplanation:'New bounded evidence reviewed.'};process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{summary:'Bounded incident analysis.',hypotheses:[],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live validation pending.'],nextSteps:['Review source.'],risk,codeFindings:[],teamsMessages:[],issueSpec:{title:'Review load test',problem:'Fictional workload.',impact:'Test only.',proposedChange:'Review.',acceptanceCriteria:['Check evidence.'],evidenceIds:[],openQuestions:['Live validation pending.']}}})+'\\n');`;
+  const body=`#!${process.execPath}\nimport {appendFileSync} from 'node:fs';let input='';for await(const chunk of process.stdin)input+=chunk;const request=JSON.parse(input),c=request.incident;appendFileSync(${JSON.stringify(record)},JSON.stringify({incidentId:c.incident.id,requests:request.requestBatch||[],bytes:Buffer.byteLength(input)})+'\\n');const risk={likelihood:'unknown',likelihoodRationale:'Recorded evaluation only.',confidence:'low',confidenceRationale:'No production validation.',impact:'Service impact is being investigated.',assumptions:[],alternatives:['Independent dependency failure.'],contraryEvidenceIds:[],sourceQuality:[],indicators:['Inspect actual errors.'],changeExplanation:'New bounded evidence reviewed.'};process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{summary:'Bounded incident analysis.',hypotheses:[],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live validation pending.'],nextSteps:['Review source.'],risk,codeFindings:[],teamsMessages:[],remediation:{kind:'collect-evidence',targetSha:null,rationale:'Transport fixture only.',evidenceIds:[],verificationSteps:['Verify independently.'],blockingUnknowns:['No real model used.']},issueSpec:{title:'Review load test',problem:'Fictional workload.',impact:'Test only.',proposedChange:'Review.',acceptanceCriteria:['Check evidence.'],evidenceIds:[],openQuestions:['Live validation pending.']}}})+'\\n');`;
   await writeFile(command,body,{mode:0o700});
   const config=()=>{const c=loadConfig({SRE_CONFIG:'config/sre.agent.json',SRE_SQLITE_PATH:join(directory,'db.sqlite')});const s=c.services[0];s.teams.conversations=Array.from({length:32},(_,n)=>'group-'+n);s.teams.collaborationGroups[0].conversations=s.teams.conversations.map(id=>({id,name:id}));c.env={...process.env,SRE_CLAUDE_BIN:command};return c;};
   const open=()=>createSreRuntime({config:config(),autoStart:false});

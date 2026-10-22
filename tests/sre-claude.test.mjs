@@ -4,7 +4,7 @@ import { mkdtemp,writeFile,readFile,rm,access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ClaudeReasoner,claudeEnvironment } from '../src/sre/claude-reasoner.mjs';
+import { ClaudeReasoner,claudeEnvironment,claudeSchema } from '../src/sre/claude-reasoner.mjs';
 import { claudeOptions } from '../src/sre/claude-config.mjs';
 import { riskScope,fixtureRisk } from '../src/sre/analytic-risk.mjs';
 import { loadConfig,validateConfig } from '../src/sre/config.mjs';
@@ -16,7 +16,7 @@ function context() {
   const now=Date.now(),c={incident:{id:'inc_claude',service_key:'auction-local',issue_key:'P-CLAUDE',title:'Synthetic incident',status:'open',started_at:now-1000,updated_at:now,revision:1,analysis:null},session:{agent_id:'agent_claude',remote_state:{sessionId:'older-eve-session',private:'PRIVATE_SESSION_MARKER'}},evidence:[{id:'human',source:'teams',kind:'responder_update',observed_at:now,content:{text:'PRIVATE_RESPONDER_MARKER: restarted the bidder; timeout persists.'}}],deployments:[],assessmentHistory:[],responderContext:{evidenceIds:['human'],totalAvailable:1},jobs:[{error:'PRIVATE_AUDIT_MARKER'}]};
   c.riskScope=riskScope(c,{environment:'local'});return c;
 }
-function analysis(c=context()) {const risk=fixtureRisk(c);risk.sourceQuality=[];risk.contraryEvidenceIds=[];return {summary:'Synthetic Claude transport result',hypotheses:['A dependency fault remains possible.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live provider and model acceptance pending.'],nextSteps:['Review current independent telemetry.'],risk,codeFindings:[],teamsMessages:[],issueSpec:{title:'Review incident',problem:'Cause unknown.',impact:'Needs review.',proposedChange:'Collect evidence.',acceptanceCriteria:['Reproduce the symptom.'],evidenceIds:[],openQuestions:['What failed?']}};}
+function analysis(c=context()) {const risk=fixtureRisk(c);risk.sourceQuality=[];risk.contraryEvidenceIds=[];return {summary:'Synthetic Claude transport result',hypotheses:['A dependency fault remains possible.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:[],unknowns:['Live provider and model acceptance pending.'],nextSteps:['Review current independent telemetry.'],risk,codeFindings:[],teamsMessages:[],remediation:{kind:'collect-evidence',targetSha:null,rationale:'No supported causal strategy yet.',evidenceIds:[],verificationSteps:['Inspect scoped independent evidence.'],blockingUnknowns:['Current cause is unknown.']},issueSpec:{title:'Review incident',problem:'Cause unknown.',impact:'Needs review.',proposedChange:'Collect evidence.',acceptanceCriteria:['Reproduce the symptom.'],evidenceIds:[],openQuestions:['What failed?']}};}
 const envelope=data=>({type:'result',subtype:'success',is_error:false,structured_output:data,session_id:'d24b9e23-744a-4682-a20f-805de41a7153'});
 async function fixture(body,options={}) {
   const directory=await mkdtemp(join(tmpdir(),'sre-cli-test-')),command=join(directory,'fake-claude'),record=join(directory,'record.json');
@@ -29,6 +29,32 @@ ${body}\n`,{mode:0o700});
   return {directory,command,record,env,reasoner:new ClaudeReasoner({config:{claude:{command,...options.config}},env}),read:async()=>JSON.parse(await readFile(record,'utf8')),close:()=>rm(directory,{recursive:true,force:true})};
 }
 const success='process.stdout.write('+JSON.stringify(JSON.stringify(envelope(analysis())))+');';
+
+test('Claude requires a recovery proposal in both its generation schema and its host output check',async()=>{
+  const c=context();assert.ok(claudeSchema({evidence:c.evidence}).required.includes('remediation'));
+  const data=analysis(c);delete data.remediation;
+  const f=await fixture('process.stdout.write('+JSON.stringify(JSON.stringify(envelope(data)))+');');
+  try{await assert.rejects(()=>f.reasoner.investigate(c),/unsupported output shape/);}
+  finally{await f.close();}
+});
+
+test('Claude records bounded inference timing and schema retry counts without provider diagnostic contents',async()=>{
+  const events=[
+    {type:'assistant',message:{content:[{type:'text',text:'Reading scoped logs.'},{type:'tool_use',name:'StructuredOutput',id:'attempt-1',input:{private:'PRIVATE_TOOL_INPUT'}}]}},
+    {type:'user',message:{content:[{type:'tool_result',tool_use_id:'attempt-1',is_error:true,content:'PRIVATE_SCHEMA_ERROR'}]}},
+    {type:'user',message:{content:[{type:'tool_result',tool_use_id:'attempt-1',is_error:true,content:'PRIVATE_REPLAY'}]}},
+    {type:'assistant',parent_tool_use_id:'foreign',message:{content:[{type:'tool_use',name:'StructuredOutput',id:'foreign'}]}},
+    {type:'assistant',message:{content:[{type:'tool_use',name:'StructuredOutput',id:'attempt-2'}]}},
+    {...envelope(analysis()),num_turns:3,duration_api_ms:123,usage:{input_tokens:10,output_tokens:20,cache_read_input_tokens:30,cache_creation_input_tokens:40,private:'PRIVATE_USAGE'},private:'PRIVATE_RESULT'}
+  ];
+  const f=await fixture('process.stdout.write('+JSON.stringify(events.map(JSON.stringify).join('\n')+'\n')+');');
+  try{
+    const {remoteState}=await f.reasoner.investigate(context()),t=remoteState.transport;
+    assert.equal(t.structuredOutputAttempts,2);assert.equal(t.structuredOutputFailures,1);assert.ok(t.firstTextMs>=0&&t.firstTextMs<=t.elapsedMs);
+    assert.deepEqual(t.inference,{turns:3,apiDurationMs:123,inputTokens:10,outputTokens:20,cacheReadInputTokens:30,cacheCreationInputTokens:40});
+    assert.ok(!JSON.stringify(remoteState).includes('PRIVATE_'));
+  }finally{await f.close();}
+});
 async function until(fn) {for(let i=0;i<200;i++){try{const value=await fn();if(value)return value;}catch{}await delay(10);}throw Error('Fixture startup was not observed');}
 function absent(pid) {assert.throws(()=>process.kill(pid,0),error=>error.code==='ESRCH');}
 

@@ -47,7 +47,7 @@ Claude must explain a concrete mechanism and competing explanations, distinguish
 
 The output schema restricts confidence to low/moderate when delivered evidence is synthetic, incomplete, truncated or includes a connector error. The prompt also prohibits high confidence with unknown likelihood, and existing host validation still rejects inconsistent results. This constrains the model before generation without promoting an unsupported conclusion or rewriting its judgment afterward.
 
-Citation fields in the generation schema enumerate the delivered evidence IDs. Mentioned raw-page IDs and references inside source content do not become citable evidence. Source-quality limitations must be nonempty and bounded. The host independently revalidates citations and source locations after generation; an invalid result remains failed rather than being published as a diagnosis.
+Citation fields in the generation schema enumerate shorter references bound to the delivered evidence rows. The host restores durable IDs before independently revalidating citations and source locations. Mentioned raw-page IDs and references inside source content do not become citable evidence. Source-quality limitations must be nonempty and bounded; an invalid result remains failed rather than being published as a diagnosis. Selected triage rows share identical batch coverage/interpretation through a bounded `logTriageBatches` table; their samples, strata and incompleteness are preserved. SQL evidence remains unchanged. Bounded source comparisons preserve discovered review numbers, allowing casework to track a later GitLab MR/GitHub PR head without treating it as a deployment.
 
 ## Reproduce evaluation
 

@@ -1,8 +1,9 @@
 const referenceEvidence=row=>['jira','confluence'].includes(row.source);
 const fairReferences=rows=>{const buckets=new Map();for(const row of rows.filter(referenceEvidence)){const bucket=buckets.get(row.source)||[];bucket.push(row);buckets.set(row.source,bucket);}const result=[];while([...buckets.values()].some(b=>b.length))for(const bucket of buckets.values())if(bucket.length)result.push(bucket.shift());return result;};
 import {changeEvidence} from './signal-digest.mjs';
+import {hash} from './security.mjs';
 
-export const modelContextLimits=Object.freeze({totalBytes:160000,responderBytes:40000,telemetryBytes:60000,queryMetadataBytes:8000,referenceBytes:16000,changeBytes:24000,entryBytes:12000,responderEntryBytes:4000,deploymentBytes:26000,historyBytes:8000});
+export const modelContextLimits=Object.freeze({totalBytes:160000,responderBytes:40000,telemetryBytes:60000,queryMetadataBytes:8000,triageSharedBytes:8000,referenceBytes:16000,changeBytes:24000,entryBytes:12000,responderEntryBytes:4000,deploymentBytes:26000,historyBytes:8000});
 const bytes=value=>Buffer.byteLength(JSON.stringify(value),'utf8');
 const pick=(value,keys)=>Object.fromEntries(keys.filter(key=>value?.[key]!==undefined).map(key=>[key,value[key]]));
 const logManifest=row=>['dynatrace','dynatrace-logs','logs'].includes(row.source)&&row.kind==='logs'&&Array.isArray(row.content?.rawPages)&&row.content?.retention;
@@ -69,6 +70,26 @@ const deploymentFields=['recordId','provider','repository','project','id','deplo
 const scopeFields=['framework','stage','provider','changeNumber','headSha','mergedSha','environment','asOf','horizonHours','event','calibration'];
 const priorRiskFields=['likelihood','likelihoodRationale','confidence','confidenceRationale','impact','assumptions','alternatives','indicators','changeExplanation','scope'];
 
+// Share identical batch-wide limits once; retain every selected source sample
+// and stratum. This removes repetition, not noisy records or counterevidence.
+function triageProjection(row,view,previous={}){
+  let content=row.content;
+  if(row.source!=='dynatrace'||row.kind!=='log_triage'||!content||typeof content!=='object')return content;
+  if(content.sharedBatchContext){
+    const shared=previous[content.sharedBatchContext];
+    const {sharedBatchContext,...rest}=content;
+    content=shared?.derivedFrom===content.derivedFrom?{...rest,coverage:shared.coverage,interpretation:shared.interpretation}:{...rest,sharedBatchContextUnavailable:true,coverage:{unknown:true},interpretation:'Shared batch context was unavailable. Query coverage and limitations remain unknown.'};
+  }
+  if(!content.coverage||typeof content.interpretation!=='string'||typeof content.derivedFrom!=='string')return content;
+  const shared={derivedFrom:content.derivedFrom,coverage:content.coverage,interpretation:content.interpretation},key='batch-'+hash(shared);
+  if(bytes(shared)<300)return content;
+  const batches=view.logTriageBatches||{};
+  if(!batches[key]&&bytes({...batches,[key]:shared})>modelContextLimits.triageSharedBytes)return content;
+  (view.logTriageBatches??={})[key]=shared;
+  const {coverage,interpretation,...rest}=content;
+  return {...rest,sharedBatchContext:key};
+}
+
 export function boundedContext(context) {
   const incident=context.incident||{},sourceEvidence=context.evidence||[],sourceDeployments=context.deployments||[],history=context.assessmentHistory||[];
   const prior=incident.analysis;
@@ -128,7 +149,7 @@ export function boundedContext(context) {
   const changes=sourceEvidence.filter(changeEvidence).sort((a,b)=>(a.content?.comparisonKind==='deployment'?0:1)-(b.content?.comparisonKind==='deployment'?0:1));
   const manifests=sourceEvidence.filter(logManifest);
   for(const row of [...fairHumans,...changes,...fairReferences(sourceEvidence),...manifests,...sourceEvidence.filter(row=>!['question','responder_update'].includes(row.kind)&&!changeEvidence(row)&&!referenceEvidence(row)&&!logManifest(row))]) {
-    const manifest=logManifest(row),content=clipped(manifest?manifestProjection(row.content):row.content,['question','responder_update'].includes(row.kind)?modelContextLimits.responderEntryBytes:referenceEvidence(row)?6000:modelContextLimits.entryBytes);
+    const manifest=logManifest(row),content=clipped(manifest?manifestProjection(row.content):triageProjection(row,view,context.logTriageBatches),['question','responder_update'].includes(row.kind)?modelContextLimits.responderEntryBytes:referenceEvidence(row)?6000:modelContextLimits.entryBytes);
     const item={...pick(row,['id','source','kind','observed_at']),content:content.value},size=bytes(item),human=['question','responder_update'].includes(item.kind);
     if(human){if(humanUsed+size>modelContextLimits.responderBytes)continue;humanUsed+=size;}
     else if(referenceEvidence(item)){if(referenceUsed+size>modelContextLimits.referenceBytes)continue;referenceUsed+=size;}
@@ -139,6 +160,9 @@ export function boundedContext(context) {
   }
   const updateCoverage=()=>{
     const included=new Set(view.evidence.map(item=>item.id));
+    const shared=new Set(view.evidence.map(row=>row.content?.sharedBatchContext).filter(Boolean));
+    for(const key of Object.keys(view.logTriageBatches||{}))if(!shared.has(key))delete view.logTriageBatches[key];
+    if(view.logTriageBatches&&!Object.keys(view.logTriageBatches).length)delete view.logTriageBatches;
     // The initial source window can be larger than the final byte budget.
     // Recheck projection citations after every drop, using only delivered IDs.
     for(const room of view.collaboration?.rooms||[]) {

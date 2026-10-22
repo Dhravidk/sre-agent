@@ -28,6 +28,8 @@ The original offline rules console remains available explicitly with `pnpm sre:l
 
 The current workload uses four SQL-coordinated investigation slots, one active job per incident, and fixed-cadence bursts independent of model speed. Use `--concurrency 1` through `4` for a fresh run; `--legacy` retains the earlier serial/model-paced workload. Requested model/effort and capacity are pinned when resuming. The development runtime also selects four slots; other profiles retain one unless explicitly configured. Proactive duplicate model messages stay quiet while selected replies to new explicit questions remain eligible.
 
+Use `pnpm sre:groups:eval --live --expanded` for 20 fixture incidents, 64 groups and messier background/control logs across 16 source scopes. Shorter snapshot-scoped citation references and shared batch coverage reduce repeated model input/output; the host restores original evidence IDs before validation and persistence. Every Claude result must include a recovery proposal. No source sample, immutable file check or rollback-compatibility requirement is relaxed.
+
 ## System at a glance
 
 ```mermaid
