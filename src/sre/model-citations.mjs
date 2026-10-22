@@ -38,7 +38,7 @@ export function citationTransport(snapshot){
   return {wire,restore,bindings:Object.fromEntries(reverse)};
 }
 
-export function claudeInvocationInput(snapshot,{question,requests}={}){
+export function investigationInvocationInput(snapshot,{question,requests}={}){
   const transport=citationTransport(snapshot),input=JSON.stringify({...(requests?{requestBatch:requests}:{}),request:question||'Investigate this incident and explain impact, hypotheses, missing evidence and safe recovery options.',incident:transport.wire});
   return {...transport,input};
 }

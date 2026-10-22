@@ -29,7 +29,7 @@ export async function queueModelMessages(store,q,{job,analysis,previous,changed,
     if(destinations.has(roomKey))continue;
     const room=await store.authorizeIncidentConversation(roomKey,job.incident_id,q);
     if(room.incident_id!==job.incident_id)throw Error('Reply destination no longer follows the incident');
-    const text=notice??analysis.text??analysis.summary;
+    const text=analysis.text??notice??analysis.summary;
     if(typeof text!=='string'||!text.trim())throw Error('A direct request requires an assessment reply');
     await store.queueMessage(job.incident_id,text,room.id,id+':agent:'+room.id,q,{contacts:analysis.contacts,contactFormat});
     await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-message-last:'+job.incident_id+':'+room.id,JSON.stringify({version:1,textHash:hash(redact(text.trim())),assessmentHash:materialKey(analysis)}),await store.coordinationNow(q)]);

@@ -8,6 +8,8 @@ import {CodexEvaluationReasoner,codexEvaluationSchema,evaluationCliVersion} from
 import {boundedContext} from '../src/sre/model-context.mjs';
 import {fixtureRisk,riskScope} from '../src/sre/analytic-risk.mjs';
 import {ModelQuotaError} from '../src/sre/model-quota.mjs';
+import {hash} from '../src/sre/security.mjs';
+import {citationTransport} from '../src/sre/model-citations.mjs';
 
 function context(){
   const now=Date.now(),c={incident:{id:'inc_codex',service_key:'fixture',status:'open',started_at:now,updated_at:now,revision:1},session:{remote_state:{private:'PRIVATE_SESSION'}},evidence:[{id:'log',source:'dynatrace',kind:'log',observed_at:now,content:{text:'PRIVATE_EVIDENCE'}}],deployments:[],assessmentHistory:[],jobs:[{error:'PRIVATE_AUDIT'}]};
@@ -18,8 +20,8 @@ function assessment(){
   return {summary:'Synthetic Codex transport result',hypotheses:['Need independent evidence.'],changeAssessment:'unknown',candidateSha:null,evidenceIds:['log'],unknowns:['Synthetic provider contracts.'],nextSteps:['Collect independent telemetry.'],risk,codeFindings:[],teamsMessages:[],remediation:{kind:'collect-evidence',targetSha:null,rationale:'Cause unverified.',verificationSteps:['Check control.'],evidenceIds:['log'],blockingUnknowns:['Source missing.']},issueSpec:{title:'Investigate',problem:'Unknown cause.',impact:'Review required.',proposedChange:'Collect evidence.',acceptanceCriteria:['Use an independent control.'],evidenceIds:['log'],openQuestions:['Which source?']}};
 }
 const boundary={type:'item.completed',item:{type:'error',message:'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable features.code_mode_host.'}};
-const events=data=>[boundary,{type:'turn.started'},{type:'item.completed',item:{type:'agent_message',text:JSON.stringify(data)}},{type:'turn.completed',usage:{input_tokens:100,output_tokens:50}}];
-const output=items=>'process.stdout.write('+JSON.stringify(items.map(v=>JSON.stringify(v)).join('\n')+'\n')+');';
+const events=data=>[boundary,{type:'turn.started'},{type:'item.completed',item:{type:'agent_message',text:JSON.stringify(data).replaceAll('"log"','"MODEL_PRIMARY_EVIDENCE"')}},{type:'turn.completed',usage:{input_tokens:100,output_tokens:50}}];
+const output=items=>'process.stdout.write('+JSON.stringify(items.map(v=>JSON.stringify(v)).join('\n')+'\n')+'.replaceAll("MODEL_PRIMARY_EVIDENCE",JSON.parse(input).incident.evidence.find(e=>e.content.text==="PRIVATE_EVIDENCE").id));';
 async function fixture(body,{version=evaluationCliVersion,chatgpt=true,timeoutMs=3000}={}){
   const directory=await mkdtemp(join(tmpdir(),'sre-codex-test-')),command=join(directory,'codex-fixture'),record=join(directory,'record.json');
   await writeFile(command,'#!'+process.execPath+'\n'+`import {readFileSync,writeFileSync} from 'node:fs';
@@ -48,6 +50,11 @@ test('Codex evaluation uses a version-pinned official CLI, ChatGPT login, disabl
     assert.equal(result.remoteState.usage.input_tokens,100);assert.equal(states[0].phase,'started');
     for(const flag of ['--ignore-user-config','--ignore-rules','--ephemeral','--strict-config','--enable code_mode_only','--disable code_mode_host','--disable shell_tool','--disable apps','--disable plugins','--disable multi_agent','web_search="disabled"','mcp_servers={}'])assert.ok(args.includes(flag),flag);
     assert.ok(!args.includes('PRIVATE_EVIDENCE'));assert.ok(record.input.incident.evidence.some(e=>e.content.text==='PRIVATE_EVIDENCE'));
+    const alias=record.input.incident.evidence.find(e=>e.content.text==='PRIVATE_EVIDENCE').id;
+    assert.match(alias,/^ref_[a-f0-9]{12}_\d+$/);assert.deepEqual(record.schema.properties.evidenceIds.items.enum,record.input.incident.evidence.map(e=>e.id));
+    assert.deepEqual(result.analysis.evidenceIds,['log']);assert.deepEqual(result.analysis.remediation.evidenceIds,['log']);assert.deepEqual(result.analysis.issueSpec.evidenceIds,['log']);
+    assert.equal(result.remoteState.transport.inputHash,hash(JSON.stringify(record.input)));assert.equal(result.remoteState.transport.inputBytes,Buffer.byteLength(JSON.stringify(record.input)));
+    assert.ok(result.remoteState.transport.firstTextMs>=0&&result.remoteState.transport.firstTextMs<=result.remoteState.transport.elapsedMs);
     assert.ok(Buffer.byteLength(JSON.stringify(record.input.incident))<=160000);assert.ok(!JSON.stringify(record.input).includes('PRIVATE_AUDIT'));assert.ok(!JSON.stringify(record.input).includes('PRIVATE_SESSION'));
     assert.ok(!JSON.stringify(record.env).includes('PRIVATE_'));assert.equal(record.args[record.args.indexOf('--sandbox')+1],'read-only');
     const strict=node=>{if(!node||typeof node!=='object')return;if(node.type==='object'){assert.equal(node.additionalProperties,false);assert.deepEqual(node.required,Object.keys(node.properties));}for(const v of Object.values(node))if(Array.isArray(v))v.forEach(strict);else strict(v);};strict(record.schema);
@@ -58,6 +65,8 @@ test('Codex evaluation uses a version-pinned official CLI, ChatGPT login, disabl
 for(const [name,items,pattern] of [
   ['missing execution boundary',events(assessment()).slice(1),/boundary was not confirmed/],
   ['foreign evidence',events({...assessment(),evidenceIds:['other-incident']}),/outside this incident/],
+  ['raw canonical evidence',[boundary,{type:'item.completed',item:{type:'agent_message',text:JSON.stringify(assessment())}},{type:'turn.completed'}],/outside this incident/],
+  ['stale snapshot evidence',events({...assessment(),evidenceIds:[citationTransport(boundedContext({...context(),incident:{...context().incident,revision:0}})).wire.evidence[0].id]}),/outside this incident/],
   ['unknown action',events({...assessment(),executeRollback:true}),/unsupported output shape/],
   ['tool execution',[boundary,{type:'item.started',item:{type:'command_execution',command:'PRIVATE_COMMAND'}}],/unavailable tool/],
   ['native failure',[{type:'turn.failed',error:{code:'unknown',message:'PRIVATE_PROVIDER_ERROR'}}],/did not complete successfully/],
@@ -83,10 +92,12 @@ test('unverified CLI versions and API-key logins start no model evaluation',asyn
 
 test('Codex cancellation and timeout kill the owned child without publishing a result',async()=>{
   for(const cancel of [true,false]){
-    const f=await fixture("process.on('SIGTERM',()=>{});setInterval(()=>{},1000);",{timeoutMs:cancel?3000:250}),controller=new AbortController();
+    // Allow the fixture to start even when other test processes saturate the
+    // host. The assertion still requires termination of its recorded PID.
+    const f=await fixture("process.on('SIGTERM',()=>{});setInterval(()=>{},1000);",{timeoutMs:cancel?5000:1500}),controller=new AbortController();
     try{
       const outcome=f.reasoner.investigate(context(),{signal:controller.signal}).then(value=>({value}),error=>({error}));
-      let record;for(let n=0;n<100&&!record;n++){try{record=await f.read();}catch{await delay(10);}}
+      let record;for(let n=0;n<200&&!record;n++){try{record=await f.read();}catch{await delay(10);}}
       assert.ok(record);if(cancel)controller.abort();assert.match((await outcome).error.message,cancel?/cancelled/:/time budget/);
       assert.throws(()=>process.kill(record.pid,0),e=>e.code==='ESRCH');await assert.rejects(()=>access(record.cwd));
     }finally{await f.close();}

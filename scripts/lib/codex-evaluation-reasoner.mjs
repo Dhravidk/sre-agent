@@ -10,6 +10,8 @@ import {TextDecoder} from 'node:util';
 import {claudeSchema,investigationInstructions} from '../../src/sre/claude-reasoner.mjs';
 import {boundedContext,investigationSchema,validateInvestigation} from '../../src/sre/reasoner.mjs';
 import {ModelQuotaError} from '../../src/sre/model-quota.mjs';
+import {investigationInvocationInput} from '../../src/sre/model-citations.mjs';
+import {hash} from '../../src/sre/security.mjs';
 
 export const evaluationCliVersion='0.163.0-alpha.10.2';
 const disabled=['shell_tool','apps','plugins','remote_plugin','browser_use','browser_use_external','browser_use_full_cdp_access','in_app_browser','computer_use','image_generation','view_image','multi_agent','multi_agent_v2','memories','hooks','skill_search','sleep_tool','goals','tool_suggest','code_mode','code_mode_host'];
@@ -30,6 +32,7 @@ export function codexEvaluationSchema(snapshot){
 
 function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}){
   return new Promise((resolve,reject)=>{
+    const started=performance.now();let firstTextMs=null;
     let child,timer,escalation,closed=false,failure,bytes=0,diagnosticBytes=0,pending='',final='',completed=false,boundarySeen=false,usage;
     const decoder=new TextDecoder('utf-8',{fatal:true});
     const kill=signal=>{try{if(child?.pid&&process.platform!=='win32')process.kill(-child.pid,signal);else child?.kill(signal);}catch{}};
@@ -49,6 +52,7 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}){
           else if(!item.message?.startsWith('Under-development features enabled:'))throw Error('Codex CLI reported an unexpected runtime error');
         }else if(item?.type==='agent_message'){
           if(typeof item.text!=='string')throw Error('Invalid Codex message');
+          if(firstTextMs===null)firstTextMs=Math.round(performance.now()-started);
           final=item.text;
           // Only deliberate user-facing prose is progress. Do not persist
           // reasoning events or the native event stream.
@@ -75,7 +79,7 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}){
         pending+=decoder.decode();if(pending.trim())line(pending);
         if(code!==0||endedBy||!completed)throw Error('Codex CLI did not complete successfully');
         if(!boundarySeen)throw Error('Codex CLI disabled-tool boundary was not confirmed');
-        resolve({data:JSON.parse(final),usage});
+        resolve({data:JSON.parse(final),usage,transport:{elapsedMs:Math.round(performance.now()-started),firstTextMs,stdoutBytes:bytes,stderrBytes:diagnosticBytes}});
       }catch(error){reject(error instanceof ModelQuotaError?error:Error(error.message?.startsWith('Codex ')?error.message:'Codex CLI returned invalid JSON'));}
     });
     timer=setTimeout(()=>stop(Error('Codex evaluation exceeded its time budget')),timeoutMs);
@@ -87,7 +91,7 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}){
 export class CodexEvaluationReasoner {
   constructor({command=process.env.SRE_CODEX_BIN||'codex',timeoutMs=180000,env=process.env}={}){
     if(typeof command!=='string'||!command.trim()||command.length>4096||/[\0\r\n]/.test(command)||!Number.isInteger(timeoutMs)||timeoutMs<100||timeoutMs>300000)throw Error('Invalid Codex evaluation CLI options');
-    this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium'};this.env=env;
+    this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium',citationProtocol:'snapshot-alias-v1'};this.env=env;
   }
   async investigate(context,{question,requests,requestBatchVersion,signal,persistRemote}={}){
     question??=undefined;
@@ -101,8 +105,7 @@ export class CodexEvaluationReasoner {
     if(version.status!==0||version.stdout.trim()!=='codex-cli '+evaluationCliVersion)throw Error('Codex evaluation requires verified CLI '+evaluationCliVersion);
     const login=spawnSync(command,['login','status'],{env,encoding:'utf8',timeout:10000,maxBuffer:4096});
     if(login.status!==0||!/^Logged in using ChatGPT\b/m.test(login.stdout+login.stderr))throw Error('Codex evaluation requires an existing official ChatGPT login');
-    const invocationId=randomUUID(),snapshot=boundedContext(context),schema=codexEvaluationSchema(snapshot);
-    const input=JSON.stringify({request:question||'Investigate this incident and draft the evidence-backed issue specification.',...(requests?{requestBatch:requests}:{}),incident:snapshot});
+    const invocationId=randomUUID(),snapshot=boundedContext(context),{input,wire,restore}=investigationInvocationInput(snapshot,{question,requests}),schema=codexEvaluationSchema(wire);
     try{await persistRemote?.({provider:'codex-cli',invocationId,phase:'started',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion});}
     catch{throw Error('Codex invocation checkpoint could not be stored');}
     if(signal?.aborted)throw Error('Codex evaluation cancelled');
@@ -118,11 +121,11 @@ export class CodexEvaluationReasoner {
       const result=await execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress});await checkpoint;
       if(checkpointFailed)throw Error('Codex progress checkpoint could not be stored');
       if(signal?.aborted)throw Error('Codex evaluation cancelled');
-      const data=result.data;
+      const data=restore(result.data);
       if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!Object.hasOwn(investigationSchema.properties,key))||schema.required.some(key=>!Object.hasOwn(data,key)))throw Error('Codex investigation returned an unsupported output shape');
       if(typeof data.summary!=='string'||!data.summary.trim()||[...data.summary].length>600)throw Error('Codex investigation summary must contain 1 to 600 characters');
       const analysis={...validateInvestigation(data,{...context,evidence:snapshot.evidence,deployments:snapshot.deployments,collaboration:snapshot.collaboration,coverage:snapshot.coverage,signalDigest:snapshot.signalDigest}),mode:'codex'};
-      return {analysis,remoteState:{provider:'codex-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,usage:result.usage}};
+      return {analysis,remoteState:{provider:'codex-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,usage:result.usage,transport:{...result.transport,inputHash:hash(input),inputBytes:Buffer.byteLength(input),snapshotBytes:Buffer.byteLength(JSON.stringify(wire)),schemaBytes:Buffer.byteLength(JSON.stringify(schema))}}};
     }finally{await rm(cwd,{recursive:true,force:true});}
   }
 }

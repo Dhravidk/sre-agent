@@ -8,7 +8,7 @@ import { claudeOptions } from './claude-config.mjs';
 import { boundedContext,modelContextLimits } from './model-context.mjs';
 import { investigationSchema,validateInvestigation } from './reasoner.mjs';
 import {ModelQuotaError} from './model-quota.mjs';
-import {claudeInvocationInput} from './model-citations.mjs';
+import {investigationInvocationInput} from './model-citations.mjs';
 import {hash} from './security.mjs';
 import {incompleteEvidence} from './evidence-completeness.mjs';
 import {assertRequestBatch} from './question-batch-budget.mjs';
@@ -120,7 +120,7 @@ export class ClaudeReasoner {
     if(signal?.aborted)throw new Error('Claude investigation cancelled');
     const snapshot=boundedContext(context);
     assertRequestBatch(requests,requestBatchVersion);
-    const invocationId=randomUUID(),{input,wire,restore}=claudeInvocationInput(snapshot,{question,requests});
+    const invocationId=randomUUID(),{input,wire,restore}=investigationInvocationInput(snapshot,{question,requests});
     if(Buffer.byteLength(JSON.stringify(wire))>modelContextLimits.totalBytes)throw Error('Claude citation projection exceeds the snapshot budget');
     const {command,model,effort,timeoutMs,bare,maxBudgetUsd}=this.options;
     const args=['-p','--restricted','--permission-mode','dontAsk','--permission-prompts','none','--settings','{"disableAllHooks":true}','--disable-slash-commands','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disallowedTools','mcp__*','--tools','','--no-session-persistence','--output-format','stream-json','--verbose','--json-schema',JSON.stringify(claudeSchema(wire)),'--system-prompt',instructions,'--max-turns','3'];
