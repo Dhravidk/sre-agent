@@ -15,7 +15,9 @@ The paused work also contains previously developed collaboration and local QA fe
 - Initial and follow-up reads use the claimed investigator slot and exact job ownership. A different or expired owner cannot retain a result for that incident.
 - Large initial log pages, the manifest, derived triage and completion receipt commit together. A failed completion rolls them back. Replaying a completed receipt cannot silently repair a missing finalized artifact.
 - Legacy model source excerpts and optional numbered source inspection share the same immutable GitLab read budget and cache.
-- Provider schemas offer only finding formats supported by the delivered snapshot. Numbered findings are checked against delivered lines and full host provenance; invocation-local citation aliases remain mandatory.
+- Provider schemas bind each finding format to its delivered evidence IDs, paths and revisions. Numbered findings are checked against delivered lines and full host provenance; invocation-local citation aliases remain mandatory.
+- Rare error samples from large paged batches can supply reported locations only after the host checks their exact original raw page and record. The lookup verifies at most eight selected points, caches page reads and keeps raw pages out of model input. Missing, changed, shortened, denied or foreign-incident records cannot establish a location.
+- The explicit Codex development adapter translates the disjoint request variants into the supported strict schema union and restores nullable optional project selection before host validation. Explicit project strings still reach the host allowlist. This follows [official OpenAI structured-output guidance](https://developers.openai.com/api/docs/guides/structured-outputs).
 - Repeated runtime ticks wake idle investigator capacity while an earlier incident is still running. Investigation/action ordering and protected-action fences remain covered by the combined suite.
 - Reserved GitLab CI coverage requires matching provider, project and poll scope. A shared commit SHA cannot transfer those counts to GitHub or another GitLab project.
 - Alert reply receipts remain atomic with publication. The regression fixture now observes the retained retry deadline instead of expecting a delayed retry to run immediately.
@@ -25,7 +27,9 @@ The paused work also contains previously developed collaboration and local QA fe
 
 Frozen-lockfile installs passed with Node 24.19.0 and pnpm 11.25.0. Fresh baselines passed 1,490 tests on merged main and 2,365 tests on the paused checkpoint. The first combined run passed 2,523/2,533; the ten failures exposed merge-boundary regressions and stale transport/retry fixtures. Those failures were retained and repaired. All 148 focused regression tests then passed.
 
-The final combined suite passed **2,533/2,533**, with zero failures, cancellations or skips, in 239.71 seconds. All 344 frozen runtime/configuration/fixture/script/test hashes matched afterward; aggregate SHA-256: `21992709b058c62771912ff62be034be66ebeeb7c3684c8caf7074f5b569a700`. The lockfile was not changed.
+After the native preflights exposed the paged-source and provider-schema gaps described below, the next combined run passed 2,536/2,537. The remaining test expected host-only sample origins in model input. Its correction preserves exact sample/coverage comparisons and explicitly asserts that origin bookkeeping stays hidden.
+
+The final combined suite passed **2,537/2,537**, with zero failures, cancellations or skips, in 249.76 seconds. All 344 frozen runtime/configuration/fixture/script/test hashes matched afterward; aggregate SHA-256: `52e3eae55cabb86853e2c6c02bdee279b31486dcadc2ec6a28f5ad358e4fef18`. The lockfile was not changed.
 
 Native-model results are added after testing the consolidated commit. Private raw inputs, model outputs and database artifacts remain outside Git. They contain authored incident data, not an Ally acceptance record.
 

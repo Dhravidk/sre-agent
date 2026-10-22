@@ -67,11 +67,9 @@ export function triageLogBatch(content){
     group.samples[index]=item;
     // Match the original retained, redacted record after shortening a sample.
     // This metadata is for host deduplication, never an independent witness.
-    if(item!==record||group.sampleOrigins){
-      group.sampleOrigins??=Array(index).fill(null);
-      const original=redact(record,2);
-      group.sampleOrigins[index]=item===record?null:{recordHash:logRecordHash('dynatrace',original),signalKey:logIdentity(original,'dynatrace').key};
-    }
+    group.sampleOrigins??=Array(index).fill(null);
+    const original=redact(record,2);
+    group.sampleOrigins[index]={recordIndex:scanned-1,recordHash:logRecordHash('dynatrace',original),signalKey:logIdentity(original,'dynatrace').key};
     forget(group);for(const ref of references)if(group.references.length<8&&!group.references.some(r=>r.path===ref.path&&r.line===ref.line))group.references.push(ref);remember(group);
     const aggregate=summaries.get(unique);if(aggregate&&group.serverAggregates.length<2)group.serverAggregates.push(aggregate);
   }

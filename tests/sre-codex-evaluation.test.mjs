@@ -10,6 +10,7 @@ import {fixtureRisk,riskScope} from '../src/sre/analytic-risk.mjs';
 import {ModelQuotaError} from '../src/sre/model-quota.mjs';
 import {hash} from '../src/sre/security.mjs';
 import {citationTransport} from '../src/sre/model-citations.mjs';
+import Ajv from 'ajv';
 
 function context(){
   const now=Date.now(),c={incident:{id:'inc_codex',service_key:'fixture',status:'open',started_at:now,updated_at:now,revision:1},session:{remote_state:{private:'PRIVATE_SESSION'}},evidence:[{id:'log',source:'dynatrace',kind:'log',observed_at:now,content:{text:'PRIVATE_EVIDENCE'}}],deployments:[],assessmentHistory:[],jobs:[{error:'PRIVATE_AUDIT'}]};
@@ -106,4 +107,25 @@ test('Codex cancellation and timeout kill the owned child without publishing a r
 
 test('Codex schema cites only evidence delivered in its bounded snapshot',()=>{
   const schema=codexEvaluationSchema(boundedContext(context()));assert.deepEqual(schema.properties.evidenceIds.items.enum,['log']);
+});
+
+test('Codex strict request unions preserve exclusive kinds and nullable optional project selection',()=>{
+  const c=context();c.evidenceAcquisition={enabled:true};const schema=codexEvaluationSchema(boundedContext(c));
+  assert.ok(!JSON.stringify(schema).includes('"oneOf"'));assert.ok(!JSON.stringify(schema).includes('"const"'));
+  const request=schema.properties.evidenceRequests,check=new Ajv({strict:false}).compile(request),base={sha:'a'.repeat(40),path:'src/ledger/retry.py',reason:'Inspect an immutable helper.'};
+  assert.equal(check([{...base,kind:'gitlab_file',project:null,startLine:1,endLine:2}]),true);
+  assert.equal(check([{...base,kind:'gitlab_tree',project:'approved/project'}]),true);
+  assert.equal(check([{kind:'dynatrace_logs',from:1,to:2,reason:'Compare an earlier window.'}]),true);
+  for(const invalid of [{...base,kind:'gitlab_file',startLine:1,endLine:2},{...base,kind:'gitlab_tree',project:null,startLine:1,endLine:2},{kind:'dynatrace_logs',project:null,from:1,to:2,reason:'Invalid project field.'}])assert.equal(check([invalid]),false);
+});
+
+test('Codex null project selection restores omission while explicit projects and invalid selectors reach host validation',async()=>{
+  for(const project of [null,'another/project',0]){
+    const data=assessment();data.evidenceRequests=[{kind:'gitlab_file',project,sha:'a'.repeat(40),path:'src/ledger/retry.py',startLine:1,endLine:2,reason:'Inspect the unchanged helper.'}];
+    const f=await fixture(output(events(data))),c=context();c.evidenceAcquisition={enabled:true};
+    try{
+      if(project===0)await assert.rejects(()=>f.reasoner.investigate(c),/requested source selector/);
+      else{const result=await f.reasoner.investigate(c),request=result.analysis.evidenceRequests[0];assert.equal(Object.hasOwn(request,'project'),project!==null);if(project!==null)assert.equal(request.project,project);}
+    }finally{await f.close();}
+  }
 });

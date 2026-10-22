@@ -14,7 +14,15 @@ function expanded(view,row){const {sharedBatchContext,...content}=row.content;re
 test('shared batch limits preserve exact selected samples, rare operations and contrary release strata with fewer input bytes',()=>{
   const c=context(),view=boundedContext(c),byId=new Map(c.evidence.map(r=>[r.id,r]));
   assert.equal(view.evidence.length,c.evidence.length);assert.equal(Object.keys(view.logTriageBatches).length,1);
-  for(const row of view.evidence)assert.deepEqual(expanded(view,row),byId.get(row.id).content);
+  for(const row of view.evidence){
+    const expected=structuredClone(byId.get(row.id).content);
+    // Original record indices/hashes are host bookkeeping. Every delivered
+    // sample and all coverage/interpretation fields must still match exactly.
+    delete expected.triage.sampleOrigins;
+    assert.deepEqual(expanded(view,row),expected);
+    assert.deepEqual(row.content.records,byId.get(row.id).content.records);
+    assert.equal(Object.hasOwn(row.content.triage,'sampleOrigins'),false);
+  }
   const original=Buffer.byteLength(JSON.stringify(c.evidence)),projected=Buffer.byteLength(JSON.stringify({evidence:view.evidence,batches:view.logTriageBatches}));
   assert.ok(original-projected>15000);assert.ok(Buffer.byteLength(JSON.stringify(view))<=modelContextLimits.totalBytes);
   assert.ok(view.evidence.every(r=>r.content.complete===false));

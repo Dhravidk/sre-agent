@@ -7,6 +7,7 @@ import {materialChangeObservations} from './change-observation-notices.mjs';
 import {sourceInventoryWindow,materialSourceInventory} from './source-inventory.mjs';
 import {materialDiscovery,discoverySummary} from './source-discovery.mjs';
 import {sourceScopeForService} from './source-evidence.mjs';
+import {verifiedLogSourceSamples} from './log-source.mjs';
 import {materialEvidenceReads} from './evidence-request.mjs';
 import {materialSourceFindings,sourceReferenceWindow} from './source-references.mjs';
 import {readSourceIdentityHistory} from './source-identity-history.mjs';
@@ -323,6 +324,7 @@ export class SreStore {
     const collaboration=await collaborationSnapshot(this,this.services.find(service=>service.key===incident.service_key),id);
     const [simulatedRollback]=this.simulation?await this.db.query("SELECT id FROM sre_rollbacks WHERE incident_id=? AND status='simulated' LIMIT 1",[id]):[];
     const result={ ...(sourceScopeForService(this.services.find(service=>service.key===incident.service_key))?{sourceScope:sourceScopeForService(this.services.find(service=>service.key===incident.service_key))}:{}),assessmentStatus,changeAssociations:await associationContext(this,id),signalDigest,evidenceWindow,deploymentWindow:deploymentWindow.coverage,simulatedRollback:simulatedRollback?.id||null,recoveryFence:await this.restoreFence(),incident:{...incident,started_at:Number(incident.started_at),updated_at:Number(incident.updated_at),analysis:parse(incident.analysis)}, session:{...session,remote_state:parse(session?.remote_state)}, evidence:evidence.map(x=>({...x,observed_at:Number(x.observed_at),content:parse(x.content)})), responderContext:{evidenceIds:responderEvidence.map(x=>x.id).reverse(),totalAvailable:Number(responderCount.count),note:'Chronological IDs with a fair window for each delivered conversation. Earlier Teams history, attachments, edits, and deletions are not synchronized. Reports are not verified recovery or authorization.'}, collaboration,jobs,retries:retries.map(row=>({...row,requested_by:parse(row.requested_by),created_at:Number(row.created_at)})),deployments:scopedDeployments,assessmentHistory:history.map(x=>({revision:x.revision,evaluatedAt:Number(x.evaluated_at),risk:parse(x.body).risk})) };
+    if(result.sourceScope?.logLocations)result.logSourceSamples=await verifiedLogSourceSamples(result,this.db.query);
     if(result.sourceScope){result.sourceCode=sourceReferenceWindow(result);if(result.sourceCode.files.length){result.sourceIdentityHistory=await readSourceIdentityHistory(this,result,result.sourceCode.files);result.sourceCode=sourceReferenceWindow(result);}const inventory=sourceInventoryWindow(result);if(inventory.inventories.length||inventory.coverage.unverified)result.sourceInventories=inventory;}if(result.sourceScope?.discovery?.history)result.sourceDiscovery=discoverySummary(result);return result;
   }
   retryInvestigation(input) {return retryInvestigation(this,input);}

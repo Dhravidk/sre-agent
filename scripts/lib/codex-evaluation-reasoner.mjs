@@ -22,8 +22,14 @@ export function codexEvaluationEnvironment(env){
 }
 export function codexEvaluationSchema(snapshot){
   const schema=claudeSchema(snapshot);
+  // The host's request variants have disjoint kind constants. OpenAI's strict
+  // subset accepts anyOf rather than oneOf, with every property required.
+  const requests=schema.properties.evidenceRequests.items;
+  requests.anyOf=requests.oneOf;delete requests.oneOf;
+  for(const variant of requests.anyOf)if(variant.properties.project)variant.properties.project.type=['string','null'];
   const strict=node=>{
     if(!node||typeof node!=='object')return;
+    if(Object.hasOwn(node,'const')){node.type=typeof node.const;node.enum=[node.const];delete node.const;}
     if(node.type==='object'){node.additionalProperties=false;node.required=Object.keys(node.properties||{});}
     for(const child of Object.values(node))if(Array.isArray(child))child.forEach(strict);else strict(child);
   };
@@ -123,6 +129,9 @@ export class CodexEvaluationReasoner {
       if(signal?.aborted)throw Error('Codex evaluation cancelled');
       const data=restore(result.data);
       if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!Object.hasOwn(investigationSchema.properties,key))||schema.required.some(key=>!Object.hasOwn(data,key)))throw Error('Codex investigation returned an unsupported output shape');
+      // Null means the optional fixed-project selector was omitted. Explicit
+      // project strings remain intact for the host's separate allowlist check.
+      for(const request of Array.isArray(data.evidenceRequests)?data.evidenceRequests:[])if(['gitlab_file','gitlab_tree'].includes(request?.kind)&&request.project===null)delete request.project;
       if(typeof data.summary!=='string'||!data.summary.trim()||[...data.summary].length>600)throw Error('Codex investigation summary must contain 1 to 600 characters');
       const analysis={...validateInvestigation(data,context,{deliveredContext:snapshot}),mode:'codex'};
       return {analysis,remoteState:{provider:'codex-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,usage:result.usage,transport:{...result.transport,inputHash:hash(input),inputBytes:Buffer.byteLength(input),snapshotBytes:Buffer.byteLength(JSON.stringify(wire)),schemaBytes:Buffer.byteLength(JSON.stringify(schema))}}};
