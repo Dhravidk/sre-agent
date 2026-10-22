@@ -1,0 +1,753 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-22",
+  "sourceCommit": "0e0e90926eafba31e579a0c90aa59ed2984f73bc",
+  "mainParent": "e29389a961d97ca9cec9c928cf317bb871eb1c93",
+  "pausedCheckpoint": "78a457069ffdac76b90abab6a1992b5fd49bab05",
+  "frozenSourceFiles": 344,
+  "sourceAggregateSha256": "52e3eae55cabb86853e2c6c02bdee279b31486dcadc2ec6a28f5ad358e4fef18",
+  "allSourceHashesMatched": true,
+  "combinedTests": {
+    "completedAt": "2026-10-22T14:38:36.412288+00:00",
+    "command": "pnpm test --test-concurrency=8",
+    "node": "24.19.0",
+    "pnpm": "11.25.0",
+    "tests": 2537,
+    "passed": 2537,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 249759.31225,
+    "logSha256": "56282f9b78b9ae0a6656ac183b7827940b8f56de1225a9dd271ee8a65b005aee",
+    "frozenSourceFiles": 344,
+    "sourceAggregateSha256": "52e3eae55cabb86853e2c6c02bdee279b31486dcadc2ec6a28f5ad358e4fef18",
+    "allSourceHashesMatched": true
+  },
+  "nativeScope": "Actual restricted Codex inference. Authored Dynatrace-shaped records and vendor contracts; local SQL and mock GitLab HTTP. No live Dynatrace/GitLab acceptance, external message delivery, deployment execution or production capacity claim.",
+  "nativeGroupRun": {
+    "model": "actual-codex",
+    "inference": {
+      "requestedModel": "gpt-6.1-sol",
+      "effort": "medium",
+      "timeoutMs": 180000,
+      "citationProtocol": "snapshot-alias-v1",
+      "promptHash": "864fb29fb1f05163430c1d80a098cfa60dd6973b834877103bfa72015392df65"
+    },
+    "workloadVersion": 8,
+    "profile": "surge",
+    "seed": 91573,
+    "status": "passed",
+    "checks": {
+      "boundedConcurrency": true,
+      "peerCapacityExcluded": true,
+      "allBursts": true,
+      "intakeRetained": true,
+      "duplicates": true,
+      "fairFirstPass": true,
+      "quietPublishedDuringFlood": true,
+      "allGroupsServed": true,
+      "requestScope": true,
+      "boundedBatches": true,
+      "allValidatedJudgments": true,
+      "noModelFailures": true,
+      "restart": true,
+      "allJobsDrained": true,
+      "noDeployment": true,
+      "noExternalDelivery": true,
+      "boundedRequestBytes": true,
+      "allQuestionRepliesQueued": true
+    },
+    "metrics": {
+      "questionLatencyByCohort": {
+        "busy": {
+          "questions": 32,
+          "published": 32,
+          "queuedReplies": 32,
+          "publicationP50Ms": 302554,
+          "publicationP95Ms": 360676,
+          "publicationMaxMs": 360676,
+          "queuedReplyP95Ms": 360676,
+          "queuedReplyMaxMs": 360677
+        },
+        "other": {
+          "questions": 58,
+          "published": 58,
+          "queuedReplies": 58,
+          "publicationP50Ms": 99725,
+          "publicationP95Ms": 299111,
+          "publicationMaxMs": 308134,
+          "queuedReplyP95Ms": 299111,
+          "queuedReplyMaxMs": 308134
+        }
+      },
+      "incidents": 30,
+      "serviceScopes": 24,
+      "groups": 90,
+      "recordEntries": 1078854,
+      "maxActive": 4,
+      "acceptedMessages": 7091,
+      "duplicateDeliveries": 162,
+      "questions": 90,
+      "publishedQuestionJobs": 90,
+      "queuedQuestionReplies": 90,
+      "questionQueuedReplyP50Ms": 266244,
+      "questionQueuedReplyP95Ms": 350555,
+      "questionQueuedReplyMaxMs": 360677,
+      "publishedAssessments": 34,
+      "questionPublicationP50Ms": 266244,
+      "questionPublicationP95Ms": 350554,
+      "questionPublicationMaxMs": 360676,
+      "intakeP95Ms": 0.42608299999847077,
+      "intakeMaxMs": 6.871291999996174,
+      "producerDurationMs": 282151,
+      "queuedOutbox": 90,
+      "rollbacks": 0
+    },
+    "attempts": 45,
+    "failedAttempts": 0,
+    "nativeModelP50Ms": 43650,
+    "nativeModelP95Ms": 50390,
+    "maxSnapshotBytes": 95558,
+    "maxRequestBytes": 11841,
+    "maxRequestCount": 32,
+    "inputHashes": [
+      "bedbbd8ee3adff0ba26236ea444e1e11db39f813ef522928c358efa047dd3c77",
+      "664a13e640ef9abc67d1dd7f96d3f2f826fc648ff65c69fdee1f36c18c77c91f",
+      "51af553c07caba1ee08aa6c69d534f574d85f97b246f8c2969d23b5a135d7ec9",
+      "c462d6c047c68ebb7957e1a96f964dc94fce63e3488ec70f9f0a9b00865d9520",
+      "82c5d07937c655f8e5f1fa5c2da3789ce73410bd6f9fb95aab05038be40ab298",
+      "6786d445409d2693592115dd91a53ade4cb0ecb834d397b0437f1eee16b580df",
+      "b853898248a1f56cfeee4ba9d4f4b04fb802eccf3f20480fdaefc7fef3422805",
+      "4a8dd419272af1f42357c98a80efad412a92744dfc5d06e72c3002742e3bbe45",
+      "034201c7955511e0942907030793057a0cc338267a00505ef484d03fd5645889",
+      "efdca6d324960d4ab2f1c88b75b0b124e8b27dc94da18bd328906aefbe61ac61",
+      "d5417c700d75f4e8a73461ec849d0dbf782dcc9f18cb60494a24b34da3aad00c",
+      "ce172599ce33ff7fc1d4c2b31d96f63205b898277475bce3a91d274436e78817",
+      "db4a892322f059b6e7b99ce303a2afb1942b2324bb579b274eb225d4188d66f9",
+      "090c6e824d455e97b26e80a4e23975812e10943b8484d6bd2c7b8ba6fb161cfd",
+      "fe908f91a8691905caa94c816c66727cd6553b9a2df8006f32f4c15377728ae9",
+      "e67adfa8f799a5caf49e97eb3c08a44274d87063e44f7be935ea6229bc05bf63",
+      "8e4079bb8019075bff5269b177588c70efb429f852fbd9fdc1a10389e8c16579",
+      "bec87945d19d0dbc50b2e5f036784535dbdb6586e11e487c74a07a2b6a6a96e4",
+      "be2e8c892784a3d85617b96a022bbc415d28495b79755559706e7eba5d3aa088",
+      "23fe310b4bbb366458a9cf8da8940db2e41a28ada5c63d02eefcb31df114704f",
+      "1dcbb86f8dddb4b61a388ff42388406801329ddeb832f4c2439333e2a9ec31c0",
+      "82f824246bed4a7a065621599e6089eaaa77484490e5477aa431060290725a25",
+      "254db790f6cad520b8ae1f9be779c2eb61978504e744425a6e9b50714cea8130",
+      "753c01711762eb217f0895113b70694103b2064f1c5ae88679ed11242869216b",
+      "7e14d7205bd2581002c4701e63158e55fb16ccb7db4d5fcdf24b1c353993a8b8",
+      "2abcd3225f720d90225f27535a074fe9e4a8ee5c9e413cc85419c73f57547860",
+      "ed53dd0b78e5e4dc8145dd4685905b27b1786f79c68f2c3ab1a559bf7746169d",
+      "002c8914440339c4bf3706784ae259ec3bc47ac4227877b6342ff188ba757f7e",
+      "10a31046e57244bd7ea3abcded4d199f5287a8345c4a3005ca3918e316608cb9",
+      "211b81a5316a0c104e069fc8b656a3d6bd613b885b2a5c46111b2117796d40f7",
+      "110f2bc2a9a86ffbf1fbab1a808bf3131a3b9582b22ddf4ea21cc155f7bcfd35",
+      "f63ee9a133185956a920348c42648b6a642d8b7b2f2d18155eac4a4b38797097",
+      "b3046ccbaba00aec1c43eddae905c31ea77da76a61f5eb26e1a723433b1cb9c1",
+      "b484f9ee87ac7f21317b550785b9cfaf4a43e0cd8400c757a6606e9c7719cb82",
+      "07eee044edaa29edf743e474e2bc7cd42e0b24b490af7494e1ae4762252bebf6",
+      "f7d1472ef357ac50ea928df5e9c6c3ead113013075b153fd51e0ea520ad01fe5",
+      "5a52bf0b59b4d5d055b076a945c8daa33ec8caefb06e125dcf1f5c8c4782635f",
+      "58b60ac0af4d95ee155090b6cadd801fe2d6f09935d74e3d52e64904cc0c9757",
+      "b0223ce4dec3e743bec66dbb7a5e9622aaa92f93688191cbfd1fcbce71f349dc",
+      "e19cad3d0cabdc95a2c12fd64b7c462240f4a2298ce276c250bc519bb15d9861",
+      "de8324433f0a399db5a6f261b3ad8de8e36891634ef9682a33834ef942a240bd",
+      "0fc0563791fd2edaae57907801bc1d50991194ed27d8ba64450d2cbdc33a184f",
+      "e33e2c4770ff7e3b5a5daf329d759fa09246d1916a85c9a02adf41430c671670",
+      "f9a0becb8f02ebd7c668c1fc24300770a480dbe9712fa38376e218448d998aad",
+      "4bf023e0e0162ee04072e2814eb089bffab75ba84a28071b6cec6f389bbe9472"
+    ],
+    "cases": [
+      {
+        "case": "case-01",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "rollback-candidate"
+      },
+      {
+        "case": "case-02",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-03",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-04",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "dependency-mitigation"
+      },
+      {
+        "case": "case-05",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "collect-evidence"
+      },
+      {
+        "case": "case-06",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "rollback-candidate"
+      },
+      {
+        "case": "case-07",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-08",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-09",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "dependency-mitigation"
+      },
+      {
+        "case": "case-10",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "collect-evidence"
+      },
+      {
+        "case": "case-11",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "rollback-candidate"
+      },
+      {
+        "case": "case-12",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-13",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-14",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "dependency-mitigation"
+      },
+      {
+        "case": "case-15",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "collect-evidence"
+      },
+      {
+        "case": "case-16",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "rollback-candidate"
+      },
+      {
+        "case": "case-17",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-18",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-19",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "dependency-mitigation"
+      },
+      {
+        "case": "case-20",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "collect-evidence"
+      },
+      {
+        "case": "case-21",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "rollback-candidate"
+      },
+      {
+        "case": "case-22",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-23",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-24",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "dependency-mitigation"
+      },
+      {
+        "case": "case-25",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "collect-evidence"
+      },
+      {
+        "case": "case-26",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "rollback-candidate"
+      },
+      {
+        "case": "case-27",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-28",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "forward-fix"
+      },
+      {
+        "case": "case-29",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "dependency-mitigation"
+      },
+      {
+        "case": "case-30",
+        "status": "passed",
+        "checks": {
+          "model": true,
+          "current": true,
+          "sourceLocation": true,
+          "remediation": true,
+          "candidate": true,
+          "target": true,
+          "citations": true,
+          "issueSpec": true,
+          "stillOpen": true,
+          "boundedSnapshot": true
+        },
+        "remediation": "collect-evidence"
+      }
+    ],
+    "reportSha256": "595200389fa3040f54227fabc4ba0f0fe3887cd167446cde9fa312834da247c2",
+    "jobs": {
+      "total": 7121,
+      "statusCounts": {
+        "done": 34,
+        "superseded": 7087
+      }
+    }
+  },
+  "nativeNumberedSourceRun": {
+    "status": "passed",
+    "provider": "codex",
+    "checks": {
+      "published": true,
+      "actualModel": true,
+      "rareRawRetained": true,
+      "numberedSource": true,
+      "exactProject": true,
+      "exactSha": true,
+      "exactLine": true,
+      "exactQuote": true,
+      "logProvenance": true,
+      "noUnsupportedDeployment": true,
+      "noUnsupportedRollback": true,
+      "issueSpec": true,
+      "boundedSnapshot": true,
+      "noExternalActions": true
+    },
+    "calls": 1,
+    "elapsedMs": 47790,
+    "transport": {
+      "elapsedMs": 47577,
+      "firstTextMs": 9544,
+      "stdoutBytes": 7197,
+      "stderrBytes": 0,
+      "inputHash": "07774764f9ac024a8653a1e1b68e40f0c74636d16d9b8598308bb90f3f4a466c",
+      "inputBytes": 25209,
+      "snapshotBytes": 25082,
+      "schemaBytes": 8078
+    },
+    "inputHash": "07774764f9ac024a8653a1e1b68e40f0c74636d16d9b8598308bb90f3f4a466c",
+    "records": 10000,
+    "usefulPercent": 1,
+    "project": "fixture/ledger",
+    "sourcePath": "src/ledger/amounts.py",
+    "expectedLine": 12,
+    "remediation": "forward-fix",
+    "finding": {
+      "provider": "gitlab",
+      "project": "fixture/ledger",
+      "sha": "e1050a9ae740dc2740e76667a5c38d32828af9a5",
+      "path": "src/ledger/amounts.py",
+      "startLine": 12,
+      "endLine": 12,
+      "quote": "    return int(raw.strip())",
+      "verifiedLocation": true,
+      "sourceContentHash": "00def65a3211c3ddf18e42591bbf92c3f7ff8311d3f4b126fcfcbe0493a716f2"
+    },
+    "reportedLogLocations": 1
+  },
+  "nativeNumberedSourceReportSha256": "288efd883d96beaa3aff72a138affc9f0d498545f9ea07be4c5dd69e07d2453b",
+  "earlierClaudeRun": {
+    "sourceCommit": "b65a1ac0e1ccd3dc219b0a08dd03071c4f2d8673",
+    "status": "incomplete",
+    "attempts": 40,
+    "validated": 38,
+    "failed": 2,
+    "allValidatedJudgments": true,
+    "quotaState": "held",
+    "resetLabel": "2pm America/Detroit",
+    "retryAt": null,
+    "reportSha256": "8ef9b555896c904b6430f659e280c06e8c6790308ecffc82b41bac8dbb25d6b4"
+  },
+  "completedRunResume": {
+    "status": "passed",
+    "attemptsBefore": 45,
+    "attemptsAfter": 45,
+    "additionalModelCalls": 0,
+    "allChecksPassed": true,
+    "logSha256": "9c833035cbbd85562e146c410c113d2f06a5b1b969e165ff94c6212f1b1c9f76"
+  }
+}

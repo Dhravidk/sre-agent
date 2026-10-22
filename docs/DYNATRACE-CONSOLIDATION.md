@@ -31,7 +31,42 @@ After the native preflights exposed the paged-source and provider-schema gaps de
 
 The final combined suite passed **2,537/2,537**, with zero failures, cancellations or skips, in 249.76 seconds. All 344 frozen runtime/configuration/fixture/script/test hashes matched afterward; aggregate SHA-256: `52e3eae55cabb86853e2c6c02bdee279b31486dcadc2ec6a28f5ad358e4fef18`. The lockfile was not changed.
 
-Native-model results are added after testing the consolidated commit. Private raw inputs, model outputs and database artifacts remain outside Git. They contain authored incident data, not an Ally acceptance record.
+The final runtime is commit `0e0e90926eafba31e579a0c90aa59ed2984f73bc`. The [compact verification receipt](evidence/2026-10-22-dynatrace-consolidation.json) contains source/input/report hashes, every final workload gate and the observed metrics. Private raw inputs, model outputs and database artifacts remain outside Git.
+
+### Actual model results
+
+The earlier real-Claude surge stopped at an account cap: **38 validated turns and two quota failures**, with all validated judgments passing. Its overall result remains **incomplete**. The native reset label was “2pm America/Detroit,” without a date; the host retained the hold with no fabricated retry timestamp. This run used the earlier merged commit and is not final-Claude acceptance.
+
+Codex preflights then exposed a strict-schema incompatibility, missing source locations after large-log paging, and confusion between legacy and numbered finding formats. The initial unknown parser result was appropriate for the source then delivered; the invalid finding was rejected. These failed attempts were retained, the host/protocol gaps were repaired, and a fresh native source check passed.
+
+That source check supplied **10,000 authored log records with the useful 1% at the tail**. Actual Codex found the unchanged `src/ledger/amounts.py` at line 12, with the exact SHA and quote `    return int(raw.strip())`. It retained the log provenance, left deployment attribution unknown and `candidateSha:null`, proposed a contract-aligned forward fix, and drafted verification/data-reconciliation criteria. It took 47.79 seconds and performed no external action. Separate SQLite/PGlite regressions place the only useful error at record 9,999 and reject changed, missing, denied or foreign-incident raw provenance.
+
+The final fresh surge used the official, version-verified Codex CLI `0.163.0-alpha.10.2`, its existing ChatGPT login, requested model `gpt-6.1-sol` and medium effort. Execution/tools were disabled and credentials stayed outside the model. It passed **45/45 native judgments and all 18 workload gates** on the final frozen runtime.
+
+| Observed development workload | Result |
+| --- | --- |
+| Incidents / service scopes / admitted groups | 30 / 24 / 90 |
+| Authored Dynatrace-shaped record entries | 1,078,854 |
+| Decision diversity | Five authored decision classes repeated across six cohorts |
+| Sustained bursts / retained messages / deduplicated replays | 72 / 7,091 / 162 |
+| Current correct incident assessments / questions with queued full replies | 30 / 90 |
+| Drained jobs | 7,121; all done or superseded |
+| Simultaneous investigators / peer capacity exclusion | Four / passed |
+| File/SHA/line, attribution, recovery target, citations and issue-spec gates | All passed |
+| Fair first pass / quiet progress during flood / controlled restart | All passed |
+| Maximum bounded incident snapshot / request count | 95,558 bytes / 32 |
+| Completed-run resume | Passed; zero additional native calls |
+| External message delivery / rollback execution | Zero / zero |
+
+Latency remains a development limitation:
+
+| Measured queue-to-reply latency | p95 |
+| --- | --- |
+| Busy cohort, 32 questions | 360.68 seconds (6.01 minutes) |
+| Other groups, 58 questions | 299.11 seconds (4.99 minutes) |
+| All 90 questions | 350.56 seconds (5.84 minutes) |
+
+Native inference median/p95 was 43.65/50.39 seconds; local intake p95 was 0.43 ms. These observations are not production SLAs or a causal performance comparison with prior model runs. Quiet groups progressed during the flood, but several-minute queueing remains under this workload. The 90 replies were retained in the local outbox; none was delivered to Teams. Authored populations, repeated decision classes and one source-location scenario do not establish general diagnosis accuracy or live integration acceptance.
 
 ## Remaining integration acceptance
 
