@@ -85,7 +85,7 @@ for(const {concurrent,expanded}of [{concurrent:false,expanded:false},{concurrent
     assert.equal(report.bursts.length,expanded?72:36);assert.equal(report.groups.filter(g=>g.answered===1).length,suite.groups.length);
     assert.ok(report.events.some(e=>e.type==='restart'));assert.equal(report.metrics.rollbacks,0);
     const before=calls,resumed=await evaluate({directory,reasoner});assert.equal(calls,before);assert.equal(resumed.status,'passed');assert.equal(resumed.attempts.length,report.attempts.length);
-    if(concurrent){await assert.rejects(()=>evaluate({directory,reasoner,concurrency:2}),/cannot change concurrency/);await assert.rejects(()=>evaluate({directory,reasoner,expanded:!expanded}),/cannot change its workload/);await assert.rejects(()=>evaluate({directory,reasoner:{...reasoner,options:{citationProtocol:'changed'}}}),/citation protocol/);}
+    if(concurrent){await assert.rejects(()=>evaluate({directory,reasoner,concurrency:2}),/cannot change concurrency/);await assert.rejects(()=>evaluate({directory,reasoner,expanded:!expanded}),/cannot change its workload/);for(const key of ['citationProtocol','promptHash'])await assert.rejects(()=>evaluate({directory,reasoner:{...reasoner,options:{[key]:'changed'}}}),/citation protocol or prompt hash/);}
     const first=report.attempts[0],inputs=(await readFile(join(directory,'attempts',String(first.number).padStart(3,'0')+'-'+first.case+'-input.json'),'utf8'));
     assert.ok(!inputs.includes('"expected"'));assert.ok(!inputs.includes('"remediation":"rollback-candidate"'));
     const parameters=JSON.parse(await readFile(join(directory,'fixture.json'),'utf8'));

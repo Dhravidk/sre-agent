@@ -91,7 +91,7 @@ function execute(command,args,{cwd,env,input,signal,timeoutMs,onProgress}){
 export class CodexEvaluationReasoner {
   constructor({command=process.env.SRE_CODEX_BIN||'codex',timeoutMs=180000,env=process.env}={}){
     if(typeof command!=='string'||!command.trim()||command.length>4096||/[\0\r\n]/.test(command)||!Number.isInteger(timeoutMs)||timeoutMs<100||timeoutMs>300000)throw Error('Invalid Codex evaluation CLI options');
-    this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium',citationProtocol:'snapshot-alias-v1'};this.env=env;
+    this.mode='codex';this.options={command,timeoutMs,model:'gpt-6.1-sol',effort:'medium',citationProtocol:'snapshot-alias-v1',promptHash:hash(investigationInstructions)};this.env=env;
   }
   async investigate(context,{question,requests,requestBatchVersion,signal,persistRemote}={}){
     question??=undefined;

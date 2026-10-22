@@ -24,7 +24,7 @@ export async function runConcurrentGroupEvaluation({directory,seed=91573,records
   await mkdir(join(directory,'attempts'),{recursive:true,mode:0o700});
   const read=async name=>{try{return JSON.parse(await readFile(join(directory,name),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;return null;}};
   const model=reasoner instanceof ClaudeReasoner?'actual-claude':reasoner instanceof CodexEvaluationReasoner?'actual-codex':'test-double',reasonerMode=reasoner.mode;
-  const inference={requestedModel:reasoner.options?.model??null,effort:reasoner.options?.effort??null,timeoutMs:reasoner.options?.timeoutMs??null,...(reasoner.options?.citationProtocol?{citationProtocol:reasoner.options.citationProtocol}:{})};
+  const inference={requestedModel:reasoner.options?.model??null,effort:reasoner.options?.effort??null,timeoutMs:reasoner.options?.timeoutMs??null,...(reasoner.options?.citationProtocol?{citationProtocol:reasoner.options.citationProtocol}:{}),...(reasoner.options?.promptHash?{promptHash:reasoner.options.promptHash}:{})};
   if(!['claude','codex'].includes(reasonerMode))throw Error('Unsupported evaluation reasoner mode');
   let parameters=await read('fixture.json');
   if(!parameters){parameters={workloadVersion:7,questionBatchLimit:questionBatchLimits.requests,requestBatchMaxBytes:questionBatchLimits.bytes,expanded:Boolean(expanded),directReplyCoverageRequired:true,executionModel:model,reasonerMode,inference,seed,recordsPerService,now:Date.now(),concurrency,burstIntervalMs,hotUpdates,burstCount:expanded?72:36,...(expanded?{cohorts:4,hotRooms:26,messiness:'saturated'}:{})};await writeFile(join(directory,'fixture.json'),JSON.stringify(parameters,null,2)+'\n',{mode:0o600});}
@@ -33,7 +33,7 @@ export async function runConcurrentGroupEvaluation({directory,seed=91573,records
   if(expanded!==undefined&&Boolean(expanded)!==(parameters.expanded??parameters.workloadVersion===5))throw Error('An evaluation directory cannot change its workload scale/noise profile; use a fresh directory');
   if(parameters.executionModel!==model||parameters.reasonerMode!==reasonerMode)throw Error('An evaluation directory cannot change model providers or test-double identity');
   if(parameters.concurrency!==concurrency)throw Error('An evaluation directory cannot change concurrency; use a fresh directory');
-  if(JSON.stringify(parameters.inference)!==JSON.stringify(inference))throw Error('An evaluation directory cannot change its requested model, effort, timeout or citation protocol; use a fresh directory');
+  if(JSON.stringify(parameters.inference)!==JSON.stringify(inference))throw Error('An evaluation directory cannot change its requested model, effort, timeout, citation protocol or prompt hash; use a fresh directory');
   ({burstIntervalMs,hotUpdates}=parameters);
   const questionBatchLimit=parameters.workloadVersion>=7?parameters.questionBatchLimit:8;
   const suite=sustainedGroupSuite(parameters),open=async()=>new SreStore(sqliteDatabase(join(directory,'state.sqlite')),{services:suite.services,questionBatchLimit,investigationConcurrency:concurrency}).initialize();
