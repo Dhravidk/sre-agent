@@ -12,6 +12,7 @@ import {postgresSql} from '../src/sre/database.mjs';
 import {boundedContext} from '../src/sre/model-context.mjs';
 import {collaborationText} from '../src/sre/collaboration.mjs';
 import {conversationKey} from '../src/sre/store.mjs';
+import {hash} from '../src/sre/security.mjs';
 
 async function fixture(dialect,{path=':memory:',database}={}){
   const profile=rehearsalProfile(),rooms=profile.services[0].teams.conversations.slice(0,3);profile.services[0].teams.conversations=rooms;profile.services[0].teams.collaborationGroups[0].conversations=profile.services[0].teams.collaborationGroups[0].conversations.slice(0,3);
@@ -73,6 +74,88 @@ for(const dialect of ['sqlite','postgres']){
       await f.send(1,'operator','leave');view=await f.snapshot(a);assert.equal(view.rooms.length,1);assert.equal(view.rooms[0].work[0].currentForAuthor,true,'An unlinked room cannot supply a hidden superseding position');
     }finally{await f.r.close();}
   });
+
+  test(dialect+': a recovery correction in another joined chat retires only that native responder’s old state claim',async()=>{
+    const f=await fixture(dialect);try{
+      const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);
+      await f.send(0,'alex','report recovered Only the health endpoint passed; business validation is pending.');
+      const old=(await f.snapshot(id)).rooms.find(r=>r.conversationId===f.rooms[0]).stateReports[0],source=await f.r.store.db.query('SELECT * FROM sre_evidence WHERE id=?',[old.evidenceId]);
+      await f.send(1,'alex','report blocked Correction: the accepted-bid ledger still regresses.',{name:'Alex renamed'});
+      let view=await f.snapshot(id),historical=view.rooms.find(r=>r.conversationId===f.rooms[0]);
+      assert.equal(view.issues.some(i=>['reported-state-disagreement','recovery-unverified'].includes(i.code)),false);
+      assert.equal(historical.stateReports[0].currentForAuthor,false);assert.equal(historical.statusCurrentForAuthor,false);assert.equal(historical.reportedStatus,'recovered');assert.match(collaborationText(view),/recovered.*historical; responder updated elsewhere/);
+      assert.deepEqual(await f.r.store.db.query('SELECT * FROM sre_evidence WHERE id=?',[old.evidenceId]),source);
+      const current=view.rooms.find(r=>r.conversationId===f.rooms[1]).stateReports[0];assert.equal(current.currentForAuthor,true);assert.equal(current.participantKey,old.participantKey);
+      await f.send(1,'sam','report recovered A different responder still considers the probes sufficient.',{name:'Alex renamed'});
+      view=await f.snapshot(id);assert.ok(view.issues.some(i=>i.code==='reported-state-disagreement'));assert.ok(view.issues.some(i=>i.code==='recovery-unverified'));assert.equal((await f.r.store.snapshot()).rollbacks.length,0);
+    }finally{await f.r.close();}
+  });
+
+  test(dialect+': delayed and equal-time state corrections follow source time then receipt order without crossing incident scope',async()=>{
+    const f=await fixture(dialect);try{
+      const a=await f.incident('a'),b=await f.incident('b');for(const room of [0,1])await f.send(room,'operator','join '+a);await f.send(2,'operator','join '+b);
+      const at=f.now;await f.send(0,'alex','report recovered Initial probe report.',{at});await f.send(1,'alex','report blocked Correction at the same provider millisecond.',{at});await f.send(0,'alex','report recovered Delayed old recovery packet.',{at:at-1});await f.send(2,'alex','report recovered Separate US incident report.');
+      const view=await f.snapshot(a);assert.equal(view.issues.some(i=>i.code==='reported-state-disagreement'),false);assert.equal(view.issues.some(i=>i.code==='recovery-unverified'),false);assert.equal(view.rooms.find(r=>r.conversationId===f.rooms[0]).stateReports[0].currentForAuthor,false);assert.equal(view.rooms.find(r=>r.conversationId===f.rooms[1]).stateReports[0].state,'blocked');assert.equal((await f.snapshot(b)).rooms[0].stateReports[0].currentForAuthor,true);assert.ok((await f.snapshot(b)).issues.some(i=>i.code==='recovery-unverified'));
+    }finally{await f.r.close();}
+  });
+
+  test(dialect+': a departed or moved chat cannot supply a hidden superseding service-state report',async()=>{
+    const f=await fixture(dialect);try{
+      const id=await f.incident(),other=await f.incident('other');for(const room of [0,1])await f.send(room,'operator','join '+id);
+      await f.send(0,'alex','report recovered Original report in the retained chat.');await f.send(1,'alex','report blocked Correction in a chat that later leaves.');assert.equal((await f.snapshot(id)).issues.some(i=>i.code==='recovery-unverified'),false);
+      await f.send(1,'operator','leave');let view=await f.snapshot(id);assert.equal(view.rooms.length,1);assert.equal(view.rooms[0].stateReports[0].currentForAuthor,true);assert.ok(view.issues.some(i=>i.code==='recovery-unverified'));
+      await f.send(1,'operator','join '+other);await f.send(1,'alex','report blocked Separate issue still blocked.');view=await f.snapshot(id);assert.equal(view.rooms[0].stateReports[0].currentForAuthor,true);assert.equal(view.rooms[0].stateReports[0].state,'recovered');assert.equal((await f.snapshot(other)).rooms[0].stateReports[0].state,'blocked');
+    }finally{await f.r.close();}
+  });
+
+  test(dialect+': state supersession is computed before a busy peer chat’s bounded display window',async()=>{
+    const f=await fixture(dialect);try{
+      const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);
+      await f.send(0,'quiet','report recovered Initial quiet report.');await f.send(1,'quiet','report blocked Quiet responder corrects the business-impact claim.');
+      for(let n=0;n<12;n++)await f.send(1,'busy-'+n,'report blocked Independent impact sample '+n);
+      const view=await f.snapshot(id),peer=view.rooms.find(r=>r.conversationId===f.rooms[1]);assert.equal(peer.stateReports.length,8);assert.equal(peer.omittedStateReports,5);assert.ok(!peer.stateReports.some(r=>r.author==='quiet'));assert.equal(view.rooms.find(r=>r.conversationId===f.rooms[0]).stateReports[0].currentForAuthor,false);assert.equal(view.issues.some(i=>['reported-state-disagreement','recovery-unverified'].includes(i.code)),false);
+    }finally{await f.r.close();}
+  });
+
+  test(dialect+': current participant state claims are reserved before newer historical claims at the room cap',async()=>{
+    const f=await fixture(dialect);try{
+      const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);
+      await f.send(0,'quiet','report blocked The quiet participant still sees the defect.');
+      for(let n=0;n<10;n++){await f.send(0,'mirror-'+n,'report recovered Earlier health-only observation.');await f.send(1,'mirror-'+n,'report blocked Corrected business validation.');}
+      const view=await f.snapshot(id),room=view.rooms.find(r=>r.conversationId===f.rooms[0]);assert.equal(room.stateReports.length,8);assert.equal(room.omittedStateReports,3);assert.equal(room.stateReports[0].author,'quiet');assert.equal(room.stateReports[0].currentForAuthor,true);assert.ok(room.stateReports.slice(1).every(r=>r.currentForAuthor===false));assert.equal(view.issues.some(i=>i.code==='reported-state-disagreement'),false);
+    }finally{await f.r.close();}
+  });
+
+  test(dialect+': aging only a superseded service-state claim does not publish another unread briefing',async()=>{
+    const f=await fixture(dialect);try{
+      f.r.store.coordinationNow=async()=>f.now;
+      const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);
+      await f.send(0,'alex','report recovered Earlier health-only report.');f.now+=200000;await f.send(1,'alex','report blocked Corrected business impact.');await f.r.coordination.publish(id);await f.drain();const generation=(await f.snapshot(id)).briefingGeneration;
+      f.now+=100001;const view=await f.snapshot(id);assert.equal(view.rooms.find(r=>r.conversationId===f.rooms[0]).statusStale,true);assert.equal(view.issues.some(i=>i.code==='stale-team-state'),false);assert.equal(await f.r.coordination.publish(id),false);assert.equal((await f.snapshot(id)).briefingGeneration,generation);
+    }finally{await f.r.close();}
+  });
+
+  test(dialect+': anonymous service-state claims in different chats cannot supersede one another',async()=>{
+    const f=await fixture(dialect);try{
+      const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);await f.send(0,'anonymous-a','report recovered Unattributed health report.');await f.send(1,'anonymous-b','report blocked Unattributed impact report.');
+      await f.r.store.db.query("UPDATE sre_responder_people SET author_key='unknown' WHERE incident_id=?",[id]);const view=await f.snapshot(id);assert.ok(view.issues.some(i=>i.code==='reported-state-disagreement'));assert.ok(view.rooms.every(room=>room.stateReports[0].currentForAuthor&&room.stateReports[0].participantKey===null));
+    }finally{await f.r.close();}
+  });
+
+  for(const savedFormat of ['prior-release','expanded-trial'])test(dialect+': an unchanged '+savedFormat+' coordination receipt survives upgrade without another unread briefing',async()=>{
+    const f=await fixture(dialect);try{
+      f.r.store.coordinationNow=async()=>f.now;
+      const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);await f.send(0,'alex','report blocked EU ledger still fails.');await f.send(1,'sam','report blocked Matched business validation also fails.');await f.r.coordination.publish(id);await f.drain();
+      const {briefingGeneration,...content}=await f.snapshot(id),rooms=content.rooms.map(({briefing,...room})=>room);
+      // Persist the wire shape used by each already-running release. This
+      // simulates an upgrade, rather than publishing another responder report.
+      if(savedFormat==='prior-release')for(const room of rooms){delete room.statusCurrentForAuthor;room.stateReports=room.stateReports.map(report=>({state:report.state,evidenceId:report.evidenceId,at:report.at,author:report.author,participantKey:report.participantKey,text:report.text,stale:report.stale,verified:report.verified}));}
+      await f.r.store.db.query('UPDATE sre_coordination SET last_hash=? WHERE incident_id=?',[hash({...content,rooms,issues:content.issues.filter(issue=>!issue.delivery)}),id]);
+      const before=await f.r.store.db.query('SELECT * FROM sre_outbox ORDER BY id');f.now+=16001;assert.equal(await f.r.coordination.publish(id),false);assert.equal((await f.snapshot(id)).briefingGeneration,briefingGeneration);assert.deepEqual(await f.r.store.db.query('SELECT * FROM sre_outbox ORDER BY id'),before);
+      // An actual cross-chat correction must still reach both teams once.
+      await f.send(1,'alex','report recovered My later business validation passed; Sam still reports blocked.');const view=await f.snapshot(id);assert.equal(view.briefingGeneration,briefingGeneration+1);assert.ok(view.issues.some(issue=>issue.code==='reported-state-disagreement'));assert.equal(view.rooms.find(room=>room.conversationId===f.rooms[0]).statusCurrentForAuthor,false);const next=await f.r.store.db.query('SELECT * FROM sre_outbox ORDER BY id'),briefings=rows=>rows.filter(row=>row.text.startsWith('Shared incident coordination'));assert.equal(briefings(next).length,briefings(before).length+2);f.now+=16001;assert.equal(await f.r.coordination.publish(id),false);assert.deepEqual(await f.r.store.db.query('SELECT * FROM sre_outbox ORDER BY id'),next);
+    }finally{await f.r.close();}
+  });
 }
 
 test('participant positions survive database reopen and bounded model metadata drops unavailable source references',async()=>{
@@ -101,4 +184,21 @@ test('a mirrored assignment committed during a read cannot turn one person into 
     f.r.store.db.query=async(sql,args=[])=>{const result=await query(sql,args);if(!injected&&sql.includes('author_global_rank')&&args.at(-1)===conversationKey('synthetic',f.rooms[first])){injected=true;await f.send(second,'alex','work eu-check active Mirroring my one assignment in the second room.');}return result;};
     const view=await f.snapshot(id);assert.ok(injected);assert.equal(view.issues.some(i=>i.code==='overlapping-work'),false);assert.equal(view.rooms.flatMap(r=>r.work).filter(w=>w.currentForAuthor).length,1);
   }finally{await f.r.close();}
+});
+
+test('a service-state correction committed between room reads cannot manufacture a disagreement with the same person',async()=>{
+  const f=await fixture('sqlite');try{
+    const id=await f.incident(),[first,second]=[0,1].sort((a,b)=>conversationKey('synthetic',f.rooms[a]).localeCompare(conversationKey('synthetic',f.rooms[b])));for(const room of [0,1])await f.send(room,'operator','join '+id);await f.send(first,'alex','report recovered Earlier health report.');
+    const query=f.r.store.db.query;let injected=false;f.r.store.db.query=async(sql,args=[])=>{const rows=await query(sql,args);if(!injected&&sql.includes('AS state_count')&&args.at(-1)===conversationKey('synthetic',f.rooms[first])){injected=true;await f.send(second,'alex','report blocked Correction committed during the read.');}return rows;};
+    const view=await f.snapshot(id);assert.ok(injected);assert.equal(view.issues.some(i=>['reported-state-disagreement','recovery-unverified'].includes(i.code)),false);assert.equal(view.rooms.find(room=>room.conversationId===f.rooms[first]).statusCurrentForAuthor,false);assert.equal(view.rooms.flatMap(room=>room.stateReports).filter(report=>report.currentForAuthor).length,1);
+  }finally{await f.r.close();}
+});
+
+test('cross-chat state corrections and historical fix-ticket claims survive a durable reopen without replacing old evidence',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'sre-state-correction-')),path=join(directory,'agent.sqlite');let f=await fixture('sqlite',{path});try{
+    const id=await f.incident();for(const room of [0,1])await f.send(room,'operator','join '+id);await f.send(0,'alex','report recovered Initial health report.');for(let n=0;n<20&&await f.r.worker.runOnce();n++);const old=await f.r.casework.createPlan(id);
+    await f.send(1,'alex','report blocked Correction: business validation failed.');for(let n=0;n<20&&await f.r.worker.runOnce();n++);const fresh=await f.r.casework.createPlan(id),before=await f.snapshot(id),events=await f.r.store.db.query('SELECT * FROM sre_events ORDER BY id');assert.notEqual(fresh.id,old.id);assert.match(fresh.markdown,/historical claim, responder updated elsewhere/);assert.equal(fresh.markdown.includes('Reported recovery is not independently verified'),false);assert.ok(fresh.payload.collaboration.some(room=>room.statusCurrentForAuthor===false));
+    const model=boundedContext(await f.r.store.context(id));assert.ok(model.collaboration.rooms.some(room=>room.statusCurrentForAuthor===false));assert.ok(model.collaboration.rooms.flatMap(room=>room.stateReports).some(report=>report.currentForAuthor===false));
+    await f.r.close();f=await fixture('sqlite',{path});assert.deepEqual((await f.snapshot(id)).rooms.map(room=>[room.statusCurrentForAuthor,room.stateReports]),before.rooms.map(room=>[room.statusCurrentForAuthor,room.stateReports]));assert.deepEqual(await f.r.store.db.query('SELECT * FROM sre_events ORDER BY id'),events);assert.equal((await f.r.casework.getPlan(old.id,id)).markdown,old.markdown);assert.equal((await f.r.casework.getPlan(fresh.id,id)).markdown,fresh.markdown);assert.equal((await f.r.store.snapshot()).rollbacks.length,0);
+  }finally{await f.r.close();await rm(directory,{recursive:true,force:true});}
 });

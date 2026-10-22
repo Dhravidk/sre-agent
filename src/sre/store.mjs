@@ -4,6 +4,13 @@ import {queueModelMessages} from './model-notices.mjs';
 import {investigatorLimit,investigatorSlots,investigatorLeaseName,lockInvestigationScheduler,configureInvestigationScheduler,assertInvestigationScheduler} from './investigation-scheduler.mjs';
 import {ModelQuotaError,modelQuota,holdModelQuota,quotaBlocksClaim,resumeModelQuota} from './model-quota.mjs';
 import {materialChangeObservations} from './change-observation-notices.mjs';
+import {sourceInventoryWindow,materialSourceInventory} from './source-inventory.mjs';
+import {materialDiscovery,discoverySummary} from './source-discovery.mjs';
+import {sourceScopeForService} from './source-evidence.mjs';
+import {materialEvidenceReads} from './evidence-request.mjs';
+import {materialSourceFindings,sourceReferenceWindow} from './source-references.mjs';
+import {readSourceIdentityHistory} from './source-identity-history.mjs';
+import {beginInitialEvidence,completeInitialEvidence,initialEvidenceOwner,lockServiceObservations} from './initial-evidence.mjs';
 import { randomUUID } from 'node:crypto';
 import { schema,StorageError } from './database.mjs';
 import { assertText, hash, redact } from './security.mjs';
@@ -11,18 +18,25 @@ import { verifyRecovery } from './recovery.mjs';
 import { verifyRollbackNoChange } from './rollback-result.mjs';
 import { sourceStateKey, sourceState, staleSourceUpdate, restoreServiceNowStates,sameAlertObservation } from './source-state.mjs';
 import { retryInvestigation } from './investigation-retry.mjs';
-import { readRestoreFence } from './restore-recovery.mjs';
+import { readRestoreFence,restoreSummary } from './restore-recovery.mjs';
 import { authorizedRoom,roomScope,reportedStates,collaborationSnapshot,validCoordinationItem,validConversationName,incidentConversationLimit } from './collaboration.mjs';
 import {signalLimits,selectSignalEvidence,buildSignalDigest} from './signal-digest.mjs';
 import {recordChangeEvent,linkedChangeIncidents} from './casework.mjs';
 import {associationContext} from './change-associations.mjs';
 import {bindAlertThread} from './alert-intake.mjs';
+import {readAlertReplies,completeAlertReply,cancelAlertReply,queueAlertInvestigationFailure} from './alert-replies.mjs';
 import {beginChangeRead,classifyChangeRead,finishChangeRead,bindChangeReadCI,changeReadReceipt} from './change-read.mjs';
 import {ciReadState} from './ci-observations.mjs';
 import {recordContactMessage} from './contact-messages.mjs';
 import {handledDeliveryInspectionSql,projectDeliveryInspections,preparedDeliveryRecipient} from './delivery-inspections.mjs';
 import {routeWaitReason,alertConversationId} from './teams-routing.mjs';
 import {questionBatchLimits} from './question-batch-budget.mjs';
+import {submitOperatorQuestion} from './question-requests.mjs';
+import {submitSimulationTeams,simulationTeamsStatus} from './teams-requests.mjs';
+import {listTeamsInstructions,recordedTeamsInstruction} from './teams-history.mjs';
+import {readDeploymentWindow} from './deployment-window.mjs';
+import {evidenceWindowSql} from './evidence-window.mjs';
+import {submitLogRead} from './log-read-receipt.mjs';
 
 const json = (value) => JSON.stringify(value);
 const parse = (value) => value ? JSON.parse(value) : null;
@@ -38,7 +52,7 @@ function prepareIngest(input){
 }
 // Proposed next checks can answer a question without changing the incident's
 // shared understanding. Real responder actions use the separate work ledger.
-const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypotheses),a.changeAssessment,a.candidateSha,stableClaims(a.unknowns),a.rollback,a.trackedChanges,materialChangeObservations(a.observedChanges||[]),a.observedChangesLimited||false,a.contacts?.directoryId,a.contacts?.contacts.map(c=>[c.id,c.role]),a.risk?.likelihood,a.risk?.confidence,stableClaims(a.risk?.assumptions),stableClaims(a.risk?.alternatives),a.risk?.scope?.stage,a.risk?.scope?.headSha,a.risk?.scope?.mergedSha]):null;
+const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypotheses),a.changeAssessment,a.candidateSha,stableClaims(a.unknowns),a.rollback,a.trackedChanges,materialChangeObservations(a.observedChanges||[]),a.observedChangesLimited||false,a.observedSignals||null,...(a.sourceInventories?['source-inventories',materialSourceInventory(a.sourceInventories)]:[]),...(a.sourceDiscovery?['source-discovery',materialDiscovery(a.sourceDiscovery)]:[]),a.contacts?.directoryId,a.contacts?.contacts.map(c=>[c.id,c.role]),a.risk?.likelihood,a.risk?.confidence,stableClaims(a.risk?.assumptions),stableClaims(a.risk?.alternatives),a.risk?.scope?.stage,a.risk?.scope?.headSha,a.risk?.scope?.mergedSha,...(a.sourceFindings?.length?['source-findings',materialSourceFindings(a.sourceFindings)]:[]),...(a.evidenceAcquisition?.outcomes?.length?['evidence-reads',materialEvidenceReads(a.evidenceAcquisition.outcomes)]:[]),...((a.evidenceAcquisition?.history?.limited||a.evidenceAcquisition?.history?.unverified||a.evidenceAcquisition?.history?.resourcesOmitted)?['evidence-read-history',[Boolean(a.evidenceAcquisition.history.limited),Boolean(a.evidenceAcquisition.history.unverified),Boolean(a.evidenceAcquisition.history.resourcesOmitted)]]:[])]):null;
 export const conversationKey = (tenant, id) => hash([tenant, id]).slice(0, 32);
 
 export class SreStore {
@@ -136,15 +150,25 @@ export class SreStore {
       });
     }
   }
-  async ingest(input,{changeRead}={}) {
+  async ingest(input,{changeRead,includeRestoreReceipt=false,query}={}) {
     const prepared=prepareIngest(input);
     if(changeRead?.ci?.state==='observed')throw Error('Observed CI requires atomic change-read ingestion with its matching event');
-    return this.db.transaction(q=>this.#applyIngest(q,prepared,changeRead));
+    const apply=async q=>{
+      const receipt=await this.#applyIngest(q,prepared,changeRead);
+      return includeRestoreReceipt===true?{...receipt,recovery:restoreSummary(await this.restoreFence(q))}:receipt;
+    };return query?apply(query):this.db.transaction(apply);
   }
+  ingestLogRead(input){return submitLogRead(this,input,(query,event)=>this.#applyIngest(query,prepareIngest(event)));}
+  askQuestion(input){return submitOperatorQuestion(this,input,(query,event)=>this.#applyIngest(query,prepareIngest(event)));}
+  acceptSimulationRequest(input,admit){return submitSimulationTeams(this,input,options=>admit({...options,ingest:event=>this.#applyIngest(options.query,prepareIngest(event))}));}
+  simulationRequestStatus(input){return simulationTeamsStatus(this,input);}
+  listTeamsInstructions(id,options){return listTeamsInstructions(this,id,options);}
+  recordedTeamsInstruction(incidentId,id){return recordedTeamsInstruction(this,incidentId,id);}
   async ingestChangeRead(input,read,ciInput){
     const prepared=prepareIngest(input),ci=ciInput?prepareIngest(ciInput):null,bound=bindChangeReadCI(prepared.event,read,ci);
     return this.db.transaction(async q=>{
       const service=this.services.find(s=>s.key===prepared.event.serviceKey),provider=prepared.event.source,n=prepared.event.payload.number;
+      await lockServiceObservations(this,q,prepared.event.serviceKey);
       // Lock before comparing visibility. Two readers reporting the same loss
       // must not each enqueue another reassessment of that transition.
       await this.restoreFence(q,{lock:true});
@@ -166,6 +190,7 @@ export class SreStore {
     });
   }
   async #applyIngest(q,{event,id,bodyHash},changeRead){
+      await lockServiceObservations(this,q,event.serviceKey);
       const receivedAt=await this.coordinationNow(q);
       if(event.at>receivedAt+300000)throw new Error('Invalid event timestamp');
       const readBoundary=await beginChangeRead(this,q,event,changeRead,receivedAt);
@@ -220,7 +245,7 @@ export class SreStore {
         revised.add(incidentId);
       } else if (event.kind === 'deployment') {
         await q(`INSERT INTO sre_deployments(id,service_key,occurred_at,payload) VALUES(?,?,?,?) ON CONFLICT DO NOTHING`, [id,event.serviceKey,event.at,json({ ...event.payload, at:event.at, source:event.source })]);
-        incidents = await q("SELECT * FROM sre_incidents WHERE service_key=? AND status<>'resolved'", [event.serviceKey]);
+        incidents = await q("SELECT * FROM sre_incidents WHERE service_key=? AND status<>'resolved' ORDER BY id", [event.serviceKey]);
       } else if (event.incidentId) {
         incidents = await q('SELECT * FROM sre_incidents WHERE id=? AND service_key=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''), [event.incidentId,event.serviceKey]);
         if (!incidents.length) throw new Error('Unknown incident in this service');
@@ -229,8 +254,8 @@ export class SreStore {
           if(event.source!=='verification'||event.at!==event.payload?.observedAt)throw new Error('Rollback reconciliation requires an independent, time-bound verification');
           const [rollback]=await q('SELECT * FROM sre_rollbacks WHERE id=? AND incident_id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[event.payload.rollbackRequestId,event.incidentId]);
           const service=this.services.find(s=>s.key===event.serviceKey);if(!service)throw new Error('Rollback service is no longer configured');
-          const rows=await q('SELECT payload FROM sre_deployments WHERE service_key=? ORDER BY occurred_at DESC LIMIT 200',[event.serviceKey]);
-          const receipt=verifyRollbackNoChange({incident:incidents[0],deployments:rows.map(row=>parse(row.payload)),rollback},event.payload,service,await this.coordinationNow(q));
+          const window=await readDeploymentWindow(this,incidents[0],service,q);
+          const receipt=verifyRollbackNoChange({incident:incidents[0],deployments:window.deployments,rollback},event.payload,service,await this.coordinationNow(q));
           await q("UPDATE sre_rollbacks SET status='not_executed',external_ref=?,error=?,lease_until=NULL WHERE id=?",[json(receipt),'Independently verified no deployment: '+event.payload.reason,rollback.id]);
           await this.queueMessage(event.incidentId,'Workflow request '+rollback.id+' was rejected before deployment: '+event.payload.reason+'. Independent no-change verification reconciled this request. The incident remains '+incidents[0].status+'. A new action requires a fresh eligible proposal and explicit operator approval.',null,'rollback:'+rollback.id+':not_executed',q);
         }
@@ -239,9 +264,7 @@ export class SreStore {
           const incident = incidents[0];
           if(event.source!=='verification')throw new Error('Recovery requires an independent verification source');
           if(event.at!==event.payload?.observedAt)throw new Error('Verification time must match the proof observation');
-          const rows=await q('SELECT payload FROM sre_deployments WHERE service_key=? ORDER BY occurred_at DESC LIMIT 200',[event.serviceKey]);
-          const deployments=rows.map(row=>parse(row.payload));
-          const service=this.services.find(s=>s.key===event.serviceKey)||{environment:deployments[0]?.environment};
+          const configured=this.services.find(s=>s.key===event.serviceKey),window=await readDeploymentWindow(this,incident,configured,q),deployments=window.deployments,service=configured||{environment:deployments[0]?.environment};
           const current=verifyRecovery({incident,deployments},event.payload,service,await this.coordinationNow(q));
           if(event.payload.rollbackRequestId) {
             const [rollback]=await q('SELECT * FROM sre_rollbacks WHERE id=? AND incident_id=?',[event.payload.rollbackRequestId,incident.id]);
@@ -252,7 +275,7 @@ export class SreStore {
           await q("UPDATE sre_incidents SET status='resolved',updated_at=?,revision=revision+1 WHERE id=?", [event.at,incident.id]);
         }
       } else if (['log','ticket','change'].includes(event.kind)) {
-        incidents = event.kind==='change'&&event.payload?.stage==='ci-update'&&['github','gitlab'].includes(event.source)?await linkedChangeIncidents(q,event,this.db.dialect):await q("SELECT * FROM sre_incidents WHERE service_key=? AND status<>'resolved' AND started_at<=?", [event.serviceKey,event.at+900000]);
+        incidents = event.kind==='change'&&event.payload?.stage==='ci-update'&&['github','gitlab'].includes(event.source)?await linkedChangeIncidents(q,event,this.db.dialect):await q("SELECT * FROM sre_incidents WHERE service_key=? AND status<>'resolved' AND started_at<=? ORDER BY id", [event.serviceKey,event.at+900000]);
       }
       if(event.payload?.reviewOnly&&event.payload.number!==undefined){const known=new Set(incidents.map(i=>i.id));for(const related of await linkedChangeIncidents(q,event,this.db.dialect))if(!known.has(related.id))incidents.push(related);}
       await recordChangeEvent(q,event,id,event.payload?.reviewOnly?incidents.map(i=>i.id):event.incidentId?[event.incidentId]:[],this.db.dialect,this.services.find(s=>s.key===event.serviceKey));
@@ -276,16 +299,17 @@ export class SreStore {
     const responderEvidence=await this.db.query("SELECT * FROM (SELECT people.*,ROW_NUMBER() OVER (PARTITION BY room_key ORDER BY author_rank,observed_at DESC,room_order DESC,id DESC) AS room_rank FROM (SELECT e.*,COALESCE(r.conversation_key,'') AS room_key,COALESCE(r.ordinal,0) AS room_order,COALESCE(p.author_key,'unknown') AS author_key,ROW_NUMBER() OVER (PARTITION BY COALESCE(r.conversation_key,''),COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_rank FROM sre_evidence e LEFT JOIN sre_responder_rooms r ON r.evidence_id=e.id LEFT JOIN sre_responder_people p ON p.evidence_id=e.id WHERE e.incident_id=? AND e.kind IN ('responder_update','question')) people) ranked ORDER BY room_rank,author_rank,observed_at DESC,room_order DESC,id DESC LIMIT 40",[id]);
     responderEvidence.sort((a,b)=>Number(b.observed_at)-Number(a.observed_at)||Number(b.room_order)-Number(a.room_order)||b.id.localeCompare(a.id));
     const [responderCount]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind IN ('responder_update','question')",[id]);
-    const candidates=(await this.db.query("SELECT * FROM (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY source,kind ORDER BY observed_at DESC,id DESC) AS source_rank FROM sre_evidence e WHERE incident_id=? AND kind NOT IN ('responder_update','question','log_page')) ranked ORDER BY source_rank,observed_at DESC,id DESC LIMIT ?",[id,signalLimits.candidates])).map(({source_rank,...row})=>({...row,observed_at:Number(row.observed_at),content:parse(row.content)}));
+    // Source fairness encloses family fairness, so a busy source with many
+    // distinct families cannot consume every first-rank candidate. Selection
+    // metadata does not validate provider identity, completeness or causality.
+    const candidates=(await this.db.query(evidenceWindowSql(this.db.dialect),[id,signalLimits.candidates])).map(({source_rank,...row})=>({...row,observed_at:Number(row.observed_at),content:parse(row.content)}));
     const [telemetryCount]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind NOT IN ('responder_update','question','log_page')",[id]);
     const [rawLogPages]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind='log_page'",[id]);
     const selection=selectSignalEvidence(candidates),telemetry=selection.selected.map(row=>({...row,content:json(row.content)}));
     const evidenceWindow={totalAvailable:Number(telemetryCount.count)+Number(responderCount.count),rawLogPagesRetained:Number(rawLogPages.count),candidatesRead:candidates.length,candidatesLimited:Number(telemetryCount.count)>candidates.length,redundantSnapshots:selection.redundant,telemetrySelected:telemetry.length,problemSnapshotConflicts:selection.problemSnapshotConflicts};
     const evidence=[...responderEvidence,...telemetry];
-    const deployments = await this.db.query('SELECT * FROM sre_deployments WHERE service_key=? ORDER BY occurred_at DESC LIMIT 200', [incident.service_key]);
-    const run=this.simulation?evidence.map(x=>parse(x.content)?.simulationRunId).find(Boolean):null;
-    const scopedDeployments=deployments.map(x=>({...parse(x.payload),recordId:x.id})).filter(x=>!run||x.simulationRunId===run).slice(0,50);
-    const signalDigest=buildSignalDigest({evidence:candidates,deployments:scopedDeployments,incident,evidenceWindow});
+    const deploymentWindow=await readDeploymentWindow(this,incident,this.services.find(s=>s.key===incident.service_key)),scopedDeployments=deploymentWindow.deployments;
+    const signalDigest=buildSignalDigest({evidence:candidates,deployments:scopedDeployments,incident,evidenceWindow,observedAt:await this.coordinationNow()});
     const history=await this.db.query('SELECT revision,evaluated_at,body FROM sre_assessments WHERE incident_id=? ORDER BY revision DESC,evaluated_at DESC,id DESC LIMIT 5',[id]);
     const [reviewed]=incident.analysis?await this.db.query('SELECT a.revision,a.evaluated_at,(SELECT MAX(revision) FROM sre_assessments WHERE incident_id=?) AS latest_revision FROM sre_assessments a WHERE a.incident_id=? AND a.body=? ORDER BY a.revision DESC,a.evaluated_at DESC,a.id DESC LIMIT 1',[id,id,incident.analysis]):[];
     const latestRevision=reviewed?Number(reviewed.latest_revision):history.length?Number(history[0].revision):null;
@@ -298,7 +322,8 @@ export class SreStore {
     const retries=await this.db.query('SELECT id,job_id,replacement_job_id,requested_by,reason,created_at FROM sre_job_retries WHERE incident_id=? ORDER BY created_at DESC,id LIMIT 40',[id]);
     const collaboration=await collaborationSnapshot(this,this.services.find(service=>service.key===incident.service_key),id);
     const [simulatedRollback]=this.simulation?await this.db.query("SELECT id FROM sre_rollbacks WHERE incident_id=? AND status='simulated' LIMIT 1",[id]):[];
-    return { assessmentStatus,changeAssociations:await associationContext(this,id),signalDigest,evidenceWindow,simulatedRollback:simulatedRollback?.id||null,recoveryFence:await this.restoreFence(),incident:{...incident,started_at:Number(incident.started_at),updated_at:Number(incident.updated_at),analysis:parse(incident.analysis)}, session:{...session,remote_state:parse(session?.remote_state)}, evidence:evidence.map(x=>({...x,observed_at:Number(x.observed_at),content:parse(x.content)})), responderContext:{evidenceIds:responderEvidence.map(x=>x.id).reverse(),totalAvailable:Number(responderCount.count),note:'Chronological IDs with a fair window for each delivered conversation. Earlier Teams history, attachments, edits, and deletions are not synchronized. Reports are not verified recovery or authorization.'}, collaboration,jobs,retries:retries.map(row=>({...row,requested_by:parse(row.requested_by),created_at:Number(row.created_at)})),deployments:scopedDeployments,assessmentHistory:history.map(x=>({revision:x.revision,evaluatedAt:Number(x.evaluated_at),risk:parse(x.body).risk})) };
+    const result={ ...(sourceScopeForService(this.services.find(service=>service.key===incident.service_key))?{sourceScope:sourceScopeForService(this.services.find(service=>service.key===incident.service_key))}:{}),assessmentStatus,changeAssociations:await associationContext(this,id),signalDigest,evidenceWindow,deploymentWindow:deploymentWindow.coverage,simulatedRollback:simulatedRollback?.id||null,recoveryFence:await this.restoreFence(),incident:{...incident,started_at:Number(incident.started_at),updated_at:Number(incident.updated_at),analysis:parse(incident.analysis)}, session:{...session,remote_state:parse(session?.remote_state)}, evidence:evidence.map(x=>({...x,observed_at:Number(x.observed_at),content:parse(x.content)})), responderContext:{evidenceIds:responderEvidence.map(x=>x.id).reverse(),totalAvailable:Number(responderCount.count),note:'Chronological IDs with a fair window for each delivered conversation. Earlier Teams history, attachments, edits, and deletions are not synchronized. Reports are not verified recovery or authorization.'}, collaboration,jobs,retries:retries.map(row=>({...row,requested_by:parse(row.requested_by),created_at:Number(row.created_at)})),deployments:scopedDeployments,assessmentHistory:history.map(x=>({revision:x.revision,evaluatedAt:Number(x.evaluated_at),risk:parse(x.body).risk})) };
+    if(result.sourceScope){result.sourceCode=sourceReferenceWindow(result);if(result.sourceCode.files.length){result.sourceIdentityHistory=await readSourceIdentityHistory(this,result,result.sourceCode.files);result.sourceCode=sourceReferenceWindow(result);}const inventory=sourceInventoryWindow(result);if(inventory.inventories.length||inventory.coverage.unverified)result.sourceInventories=inventory;}if(result.sourceScope?.discovery?.history)result.sourceDiscovery=discoverySummary(result);return result;
   }
   retryInvestigation(input) {return retryInvestigation(this,input);}
   modelQuota() {return modelQuota(this);}
@@ -317,12 +342,30 @@ export class SreStore {
     // The role grouping is display order, not a question/answer causal link.
     ].sort((a,b)=>a.at-b.at||Number(a.role==='assistant')-Number(b.role==='assistant')||(a.role==='operator'?a.receiptOrder-b.receiptOrder:a.revision-b.revision||Number(a.matchesCurrentAssessment)-Number(b.matchesCurrentAssessment))||a.id.localeCompare(b.id));
   }
-  async addEvidence(incidentId, source, kind, content, observedAt) {
-    observedAt??=await this.coordinationNow();
+  beginInitialRead(job,serviceKey,read){return beginInitialEvidence(this,job,serviceKey,read);}
+  completeInitialRead(job,read,artifact,options){return completeInitialEvidence(this,job,read,artifact,options);}
+  assertInitialReadOwner(job,serviceKey,options){return this.db.transaction(q=>initialEvidenceOwner(this,q,job,serviceKey,options));}
+  async addEvidence(incidentId, source, kind, content, observedAt,query=this.db.query) {
+    observedAt??=await this.coordinationNow(query);
     const clean = redact(content); const id = hash([incidentId,source,kind,clean]);
-    await this.db.query(`INSERT INTO sre_evidence(id,incident_id,source,kind,observed_at,content) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`, [id,incidentId,source,kind,observedAt,json(clean)]);
-    await this.projectResponder({id,incident_id:incidentId,source,kind,content:clean});
+    await query(`INSERT INTO sre_evidence(id,incident_id,source,kind,observed_at,content) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`, [id,incidentId,source,kind,observedAt,json(clean)]);
+    await this.projectResponder({id,incident_id:incidentId,source,kind,content:clean},query);
     return id;
+  }
+  async recordEvidenceRead(job,expectedRevision,event,artifact){
+    if(!Number.isSafeInteger(expectedRevision)||!Number.isSafeInteger(event?.round)||event.round<0||event.round>2||!Number.isSafeInteger(event.index)||event.index<0||event.index>2||!['started','collected','unavailable','refused','limited','duplicate','derived-source-started','derived-source','discovery-started','discovery-collected'].includes(event.phase)||Buffer.byteLength(json(event),'utf8')>10000)throw Error('Invalid evidence read checkpoint');
+    if(artifact&&!(['gitlab:source_requested','gitlab:source_inventory','gitlab:source_locations','gitlab:source_discovery','dynatrace:logs'].includes(artifact.source+':'+artifact.kind)))throw Error('Invalid follow-up evidence artifact');
+    return this.db.transaction(async q=>{
+      const suffix=this.db.dialect==='postgres'?' FOR UPDATE':'', [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+suffix,[investigatorLeaseName(job)]),[current]=await q('SELECT incident_id,status,attempts,lease_owner,lease_until FROM sre_jobs WHERE id=?'+suffix,[job.id]);
+      const now=await this.coordinationNow(q);if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=now||!current||current.incident_id!==job.incident_id||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.attempts)!==job.attempts||Number(current.lease_until)<=now)throw Error('Evidence read job lease lost');
+      const [incident]=await q('SELECT revision,service_key FROM sre_incidents WHERE id=?'+suffix,[job.incident_id]);if(!incident||Number(incident.revision)!==expectedRevision)return null;
+      if((await this.restoreFence(q))?.active)throw Error('Evidence follow-up reads are held for restore reconciliation');
+      const clean=artifact?redact(artifact.content):null,sourceEvidenceId=artifact?hash([job.incident_id,artifact.source,artifact.kind,clean]):null,body=redact({...event,version:1,jobId:job.id,attempt:job.attempts,revision:expectedRevision,serviceKey:incident.service_key,...(sourceEvidenceId?{sourceEvidenceId}:{})}),eventId=hash([job.incident_id,'system','evidence_read',body]);
+      if(artifact)await q('INSERT INTO sre_evidence(id,incident_id,source,kind,observed_at,content) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING',[sourceEvidenceId,job.incident_id,artifact.source,artifact.kind,now,json(clean)]);
+      await q('INSERT INTO sre_evidence(id,incident_id,source,kind,observed_at,content) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING',[eventId,job.incident_id,'system','evidence_read',now,json(body)]);
+      if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw Error('Evidence read lease expired during checkpoint');
+      return{eventId,sourceEvidenceId};
+    });
   }
   async claim(owner, leaseMs = 60000) {
     if(!Number.isSafeInteger(leaseMs)||leaseMs<=0)throw new Error('Invalid investigation lease duration');
@@ -437,16 +480,22 @@ export class SreStore {
       await q('INSERT INTO sre_assessments(id,incident_id,revision,evaluated_at,body) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',[job.id,job.incident_id,Number(prior.revision),await this.coordinationNow(q),json(analysis)]);
       if (remoteState) await q('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?', [json(remoteState),job.incident_id]);
       const id=hash(['analysis',job.id]);
-      const origin=job.payload.question?job.payload.conversationKey:null,replies=new Set(requiredReplyKeys(job.payload)),notice=notification.text??analysis.text,contactFormat=notification.contactFormat??'full';
+      const origin=job.payload.question?job.payload.conversationKey:null,notice=notification.text??analysis.text,contactFormat=notification.contactFormat??'full';
+      const targets=await this.messageTargets(job.incident_id,null,q),alertReplies=await readAlertReplies(q,job.incident_id,targets);
+      const replies=new Set(requiredReplyKeys(job.payload).filter(key=>!alertReplies.has(key)||alertReplies.get(key).value.status==='pending'));
+      for(const [key,reply]of alertReplies)if(reply.value.status==='pending')replies.add(key);
       if(['claude','codex'].includes(analysis.mode)&&analysis.teamsMessages!==undefined){
-        await queueModelMessages(this,q,{job,analysis,previous,changed,id,replies,notice,contactFormat});
-      }else if(changed&&!origin)await this.queueMessage(job.incident_id,notice,null,id,q,{broadcast:true,contacts:analysis.contacts,contactFormat});
+        const queued=await queueModelMessages(this,q,{job,analysis,previous,changed,id,replies,notice,contactFormat});
+        for(const [roomKey,outboxId] of queued)await completeAlertReply(q,alertReplies.get(roomKey),outboxId,await this.coordinationNow(q));
+      }else if(changed&&!origin){
+        await this.queueMessage(job.incident_id,notice,null,id,q,{broadcast:true,contacts:analysis.contacts,contactFormat});
+        for(const room of targets)await completeAlertReply(q,alertReplies.get(room.id),targets.length===1?id:id+':'+room.id,await this.coordinationNow(q));
+      }
       else {
         // Questions get a full answer only in their original conversation.
         // A changed judgment still informs peers. Coalesced alert replies are
         // independent obligations, including when the judgment is unchanged.
-        const targets=await this.messageTargets(job.incident_id,null,q);
-        for(const room of targets)if((changed||room.id===origin||replies.has(room.id))&&room.incident_id===job.incident_id){const full=room.id===origin;await this.queueMessage(job.incident_id,full?analysis.text:notice,room.id,targets.length===1?id:id+':'+room.id,q,{contacts:analysis.contacts,contactFormat:full?'full':contactFormat});}
+        for(const room of targets)if((changed||room.id===origin||replies.has(room.id))&&room.incident_id===job.incident_id){const full=room.id===origin,outboxId=targets.length===1?id:id+':'+room.id;await this.queueMessage(job.incident_id,full?analysis.text:notice,room.id,outboxId,q,{contacts:analysis.contacts,contactFormat:full?'full':contactFormat});await completeAlertReply(q,alertReplies.get(room.id),outboxId,await this.coordinationNow(q));}
       }
       if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the investigation result');
       if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the investigation result');}
@@ -455,18 +504,23 @@ export class SreStore {
   }
   async fail(job, error, maxAttempts = 3) {
     await this.db.transaction(async q=>{
+      // A terminal alert notice shares inbox admission order, before the
+      // investigator lease and restore/incident locks. Network remains outside.
+      if(job.attempts>=maxAttempts){const [scope]=await q('SELECT service_key FROM sre_incidents WHERE id=?',[job.incident_id]);if(scope)await lockServiceObservations(this,q,scope.service_key);}
       await lockInvestigationScheduler(this,q);
       const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[investigatorLeaseName(job)]);
-      const [current]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
+      const [current]=await q('SELECT incident_id,status,attempts,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       const now=await this.coordinationNow(q);
-      if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=now||!current||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.lease_until)<=now)return;
+      if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=now||!current||current.incident_id!==job.incident_id||Number(current.attempts)!==job.attempts||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.lease_until)<=now)return;
       if(error instanceof ModelQuotaError){
         await holdModelQuota(this,q,job,error,now);
         if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording model quota');
         if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording model quota');}
         return;
       }
-      await q("UPDATE sre_jobs SET status=?,error=?,next_at=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND status='running'",[job.attempts>=maxAttempts?'dead':'pending',redact(String(error.message || error)),now+Math.min(60000,1000*2**job.attempts),job.id,job.lease_owner]);
+      const exhausted=job.attempts>=maxAttempts;
+      await q("UPDATE sre_jobs SET status=?,error=?,next_at=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND status='running'",[exhausted?'dead':'pending',redact(String(error.message || error)),now+Math.min(60000,1000*2**job.attempts),job.id,job.lease_owner]);
+      if(exhausted)await queueAlertInvestigationFailure(this,q,job,error,now);
       if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording failure');
       if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording failure');}
     });
@@ -545,6 +599,7 @@ export class SreStore {
     return this.db.transaction(async q=>{
       await this.authorizeIncidentConversation(id,incidentId,q);
       await q('UPDATE sre_conversations SET incident_id=NULL WHERE id=? AND incident_id=?',[id,incidentId]);
+      await cancelAlertReply(q,incidentId,id,await this.coordinationNow(q),'Conversation stopped following this incident');
       await q("UPDATE sre_outbox SET status='discarded',error='Conversation stopped following this incident' WHERE conversation_key=? AND incident_id=? AND status='pending'",[id,incidentId]);
     });
   }
@@ -577,15 +632,16 @@ export class SreStore {
   }
   async snapshot() {
     const restoreId=(await this.restoreFence())?.restoreId??null;
-    const [incidents,jobs,outbox,rollbacks,sessions,counts,attentionOutbox] = await Promise.all([
+    const [incidents,jobs,outbox,rollbacks,sessions,eventCounts,attentionOutbox] = await Promise.all([
       this.db.query('SELECT * FROM sre_incidents ORDER BY updated_at DESC LIMIT 100'),
       this.db.query('SELECT id,incident_id,status,attempts,error FROM sre_jobs ORDER BY created_at DESC LIMIT 100'),
       this.db.query('SELECT * FROM sre_outbox ORDER BY created_at DESC LIMIT 100'),
       this.db.query('SELECT id,incident_id,proposal,status,approved_by,external_ref,error,expires_at FROM sre_rollbacks ORDER BY created_at DESC LIMIT 50'),
       this.db.query('SELECT incident_id,agent_id FROM sre_sessions'),
-      this.db.query('SELECT source,COUNT(*) AS count FROM sre_events GROUP BY source'),
+      this.db.query('SELECT service_key,source,COUNT(*) AS count,CAST(SUM(COUNT(*)) OVER (PARTITION BY source) AS BIGINT) AS source_count FROM sre_events GROUP BY service_key,source ORDER BY source,service_key'),
       this.db.query("SELECT o.* FROM sre_outbox o WHERE o.status IN ('unknown','failed') AND NOT "+handledDeliveryInspectionSql('o')+' ORDER BY o.created_at DESC,o.id DESC LIMIT 12',[restoreId]),
     ]);
+    const counts=[...new Map(eventCounts.map(row=>[row.source,{source:row.source,count:row.source_count}])).values()],countsByService=eventCounts.map(({service_key,source,count})=>({service_key,source,count}));
     const deliveryRows=[...new Map([...outbox,...attentionOutbox].map(row=>[row.id,row])).values()];
     const contactDeliveries=deliveryRows.length?await this.db.query('SELECT id,value FROM sre_checkpoints WHERE id IN ('+deliveryRows.map(()=>'?').join(',')+')',deliveryRows.map(row=>'contact-delivery:'+row.id+':'+row.attempts)):[];
     for(const delivery of contactDeliveries){
@@ -605,6 +661,6 @@ export class SreStore {
     }
     await projectDeliveryInspections(this,deliveryRows,deliveryRecords,restoreId);
     const enriched=new Map(deliveryRows.map(row=>[row.id,row]));
-    return {incidents:incidents.map(x=>({...x,analysis:parse(x.analysis)})),jobs,outbox:outbox.map(row=>enriched.get(row.id)),attentionOutbox:attentionOutbox.map(row=>enriched.get(row.id)),rollbacks:rollbacks.map(x=>({...x,proposal:parse(x.proposal)})),sessions,counts,workerConcurrency:this.investigationConcurrency,modelQuota:await this.modelQuota(),deliveryInspectionVersion:1};
+    return {incidents:incidents.map(x=>({...x,analysis:parse(x.analysis)})),jobs,outbox:outbox.map(row=>enriched.get(row.id)),attentionOutbox:attentionOutbox.map(row=>enriched.get(row.id)),rollbacks:rollbacks.map(x=>({...x,proposal:parse(x.proposal)})),sessions,counts,countsByService,workerConcurrency:this.investigationConcurrency,modelQuota:await this.modelQuota(),deliveryInspectionVersion:1};
   }
 }

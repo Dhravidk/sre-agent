@@ -12,6 +12,9 @@ import { isSimulationMode } from './runtime-mode.mjs';
 import { validateCollaboration } from './collaboration.mjs';
 import { validateTeamsAdmission,tenantAdmission } from './teams-access.mjs';
 import {investigatorLimit} from './investigation-scheduler.mjs';
+import {validateLogLocationMapping} from './source-evidence.mjs';
+import {validateFollowupConfiguration} from './evidence-request.mjs';
+import {discoveryConfiguration} from './source-discovery-config.mjs';
 
 export function loadConfig(env=process.env) {
   const path=env.SRE_CONFIG||'config/sre.local.json';
@@ -41,6 +44,8 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
   if(config.pollConcurrency!==undefined&&(!Number.isInteger(config.pollConcurrency)||config.pollConcurrency<1||config.pollConcurrency>8))throw new Error('pollConcurrency must be between 1 and 8');
   if(config.activeReconcileIntervalMs!==undefined&&(!Number.isFinite(config.activeReconcileIntervalMs)||config.activeReconcileIntervalMs<10000||config.activeReconcileIntervalMs>86400000))throw new Error('activeReconcileIntervalMs must be between 10 seconds and one day');
   for(const service of config.services) {
+    validateFollowupConfiguration(service);
+    discoveryConfiguration(service);
     for(const key of ['key','name','tenant','environment'])assertText(service[key],key);
     if(!/^[a-z0-9][a-z0-9_-]+$/.test(service.key)||keys.has(service.key))throw new Error('Service keys must be unique URL-safe names');
     keys.add(service.key);
@@ -50,6 +55,12 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
     }
     for(const source of ['github','gitlab','jira','servicenow','dynatrace','dynatraceLogs','releases','logs','verification','rollback'])if(service[source]?.enabled!==undefined&&typeof service[source].enabled!=='boolean')throw new Error(source+'.enabled must be a boolean');
     for(const source of ['dynatrace','dynatraceLogs'])if(service[source]?.logInvestigation!==undefined)logInvestigationOptions(service[source]);
+    if(service.gitlab?.sourceInspection!==undefined){
+      const value=service.gitlab.sourceInspection,project=String(service.gitlab.project??'');
+      if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.enabled!=='boolean'||Object.keys(value).some(key=>!['enabled','logLocations'].includes(key)))throw Error('gitlab.sourceInspection requires an explicit enabled boolean and only optional logLocations');
+      if(value.logLocations!==undefined)validateLogLocationMapping(value.logLocations);
+      if(value.enabled&&(project.length>512||!/^(?:[1-9]\d*|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)$/.test(project)||project.split('/').some(part=>part==='.'||part==='..')))throw Error('Source inspection requires a configured GitLab project');
+    }
     if(service.servicenow?.closedStates!==undefined&&(!Array.isArray(service.servicenow.closedStates)||!service.servicenow.closedStates.length||service.servicenow.closedStates.some(value=>!/^[A-Za-z0-9_-]{1,64}$/.test(String(value)))))throw new Error('ServiceNow closedStates must be a nonempty list of state values');
     if(service.servicenow?.correlateLogMonitors!==undefined&&typeof service.servicenow.correlateLogMonitors!=='boolean')throw new Error('ServiceNow correlateLogMonitors must be a boolean');
     if(service.servicenow)validateServiceNowMcp(service.servicenow);
@@ -73,6 +84,7 @@ function normalizeConfig(config,env,requireRuntimeCredentials) {
     if(config.mode==='trial'&&(['github','gitlab','jira','servicenow','dynatrace','dynatraceLogs','releases','logs','verification'].some(key=>service[key]?.enabled||service[key]?.webhookSecretEnv)||service.monitors?.length))throw new Error('Trial mode accepts mock evidence only; live readers, webhooks and metric monitors require connected mode');
     if(service.rollback?.enabled) {
       if(!['github','gitlab'].includes(service.rollback.provider))throw new Error('Invalid rollback provider');
+      if(service.rollback.provider==='gitlab'&&!service.gitlab?.project)throw Error('GitLab rollback requires a verified fixed project; discovery candidates cannot bind deployment actions');
       if(config.mode==='connected') {
         if(!service[service.rollback.provider]?.enabled)throw new Error('Rollback needs an enabled repository connector');
         if(!service.rollback.tokenEnv||!service.rollback.ref||service.rollback.tokenEnv===service[service.rollback.provider].tokenEnv)throw new Error('Rollback requires a separate write token and configured protected ref');

@@ -26,8 +26,9 @@ import { isSimulationMode } from './runtime-mode.mjs';
 import { IncidentCollaboration,roomScope,conversationDisplayName } from './collaboration.mjs';
 import {Casework} from './casework.mjs';
 import {normalizeAlert} from './alert-intake.mjs';
-import {LogDetector} from './log-detection.mjs';
+import {LogDetector,LogScopeLimitError} from './log-detection.mjs';
 import {DeliveryInspections} from './delivery-inspections.mjs';
+import {restoreSummary} from './restore-recovery.mjs';
 
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 async function body(req) {
@@ -38,13 +39,15 @@ async function body(req) {
 const decode=(raw)=>{try{return JSON.parse(raw.toString('utf8'));}catch{throw fail(400,'Invalid JSON');}};
 const bearer=(req)=>String(req.headers.authorization||'').replace(/^Bearer /,'');
 
-export async function createSreRuntime({config=loadConfig(),db,connectors,reasoner,sender,qaAdapter,deliveryOptions,autoStart=true}={}) {
+export async function createSreRuntime({config=loadConfig(),db,connectors,reasoner,sender,qaAdapter,qaOptions,deliveryOptions,autoStart=true}={}) {
   const simulation=isSimulationMode(config.mode);
   const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services,questionBatchLimit:config.agentMode==='claude'?questionBatchLimits.requests:1,investigationConcurrency:config.investigationConcurrency??1}).initialize();
+  const consoleRecovery=state=>({...state,questionsHeld:state.active&&config.agentMode!=='rules'});
+  const consoleReceipt=receipt=>receipt.recovery?{...receipt,recovery:consoleRecovery(receipt.recovery)}:receipt;
   const secret=config.capabilitySecret||randomBytes(32).toString('hex');
   connectors ||= new Map(config.services.map(service=>[service.key,simulation?{}:createConnectors(service,{env:config.env,clock:()=>store.coordinationNow(),retryGateFactory:descriptor=>providerRetryGate(store,descriptor)})]));
   reasoner ||= config.agentMode==='claude'?new ClaudeReasoner({config,env:config.env}):config.agentMode==='eve'?new EveReasoner({host:config.env.EVE_URL,token:config.env.EVE_TOKEN,capabilitySecret:secret}):new RulesReasoner();
-  const casework=new Casework({store,services:config.services,qaAdapter});
+  const casework=new Casework({store,services:config.services,qaAdapter,qaOptions});
   const inspections=new DeliveryInspections({store,services:config.services});
   const logDetector=new LogDetector({store,services:config.services});
   const Worker=store.investigationConcurrency>1?InvestigationPool:IncidentWorker;
@@ -58,11 +61,11 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
     bridge=await startSreTeams({router,store,mode:config.teamsMode,env:config.env,host:config.host,port:Number(config.env.TEAMS_PORT||3978)});sender=bridge.sender;
   }
   const outbox=new TeamsOutbox({store,services:config.services,sender,casework,...deliveryOptions});
-  const operations=new OperationalMonitor({store,config,poller,outbox,schedulerEnabled:autoStart,investigationBudgetMs:['claude','codex'].includes(reasoner.mode)?investigationTimeBudgetMs(reasoner):0});
+  const operations=new OperationalMonitor({store,config,poller,outbox,casework,schedulerEnabled:autoStart,investigationBudgetMs:['claude','codex'].includes(reasoner.mode)?investigationTimeBudgetMs(reasoner):0});
   const activeDeliveries=new Set();let deliveryError;
-  let activeTick,activePoll,activeCommands,closePromise;let stopped=false;
+  let activeTick,activeInvestigation,activeActions,activePoll,activeCommands,closePromise;let stopped=false,actionPhase=null;
   // A slow read-only model turn must not delay durable command acknowledgements.
-  // Deployment execution still follows investigation and revalidation in tick().
+  // Protected execution retains the serial action phase and fresh revalidation.
   function commands() {
     if(stopped)return Promise.resolve();
     if(!activeCommands)activeCommands=(async()=>{
@@ -73,18 +76,52 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
     })().finally(()=>{activeCommands=undefined;});
     return activeCommands;
   }
-  function tick() {
+  function investigate() {
     if(stopped)return Promise.resolve();
-    if(activeTick)worker.wake?.();
-    if(activeTick)return activeTick;
-    activeTick=(async()=>{
+    if(activeInvestigation)worker.wake?.();
+    if(activeInvestigation)return activeInvestigation;
+    // Only an already submitted isolated QA call may overlap investigation.
+    // Its preflight/publication and protected rollback phase remain ordered.
+    if(actionPhase&&(actionPhase!=='qa'||casework.qaState().unresolved===0))return Promise.resolve(false);
+    activeInvestigation=(async()=>{
       operations.begin('tick');let error;
       try {
       await commands();
-      await logDetector.runOnce();await worker.runOnce();if(stopped)return;await casework.runOnce();await rollbacks.recoverInterrupted();await rollbacks.executeNext();await commands();
+      let detectionError;
+      try {await logDetector.runOnce();}catch(caught){if(!(caught instanceof LogScopeLimitError))throw caught;detectionError=caught;}
+      await worker.runOnce();await commands();
+      // Report partial detection after independent read-only work progresses.
+      // The full-cycle barrier still rejects before its protected action phase.
+      if(detectionError)throw detectionError;
       } catch(caught){error=caught;throw caught;}
       finally {operations.end('tick',error);}
-    })().finally(()=>{activeTick=undefined;});
+    })().finally(()=>{activeInvestigation=undefined;});
+    return activeInvestigation;
+  }
+  function actions() {
+    if(stopped)return Promise.resolve(false);
+    if(activeActions)return activeActions;
+    if(activeInvestigation)return Promise.resolve(false);
+    activeActions=(async()=>{
+      actionPhase='qa';operations.begin('actions');let error;
+      try {
+        await casework.runOnce();
+        // Do not start a protected write while a fresh review or an uncertain
+        // local executor is still running. The next cycle rechecks eligibility.
+        if(!stopped&&!activeInvestigation&&casework.qaState().reserved===0){
+          actionPhase='rollback';await rollbacks.recoverInterrupted();if(!stopped)await rollbacks.executeNext();
+        }
+      } catch(caught){error=caught;throw caught;}
+      finally {actionPhase=null;operations.end('actions',error);}
+    })().finally(()=>{activeActions=undefined;});
+    return activeActions;
+  }
+  function tick() {
+    if(stopped)return Promise.resolve();
+    if(activeTick){if(activeInvestigation)worker.wake?.();return activeTick;}
+    // Retain the explicit full-cycle barrier used by embedded exercises. The
+    // automatic scheduler advances investigation independently of this wait.
+    activeTick=(async()=>{await investigate();if(!stopped)await actions();await commands();})().finally(()=>{activeTick=undefined;});
     return activeTick;
   }
   function poll() {
@@ -106,7 +143,8 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
     if(!tasks.length&&!activeDeliveries.size)operations.end('delivery');
     return Promise.all([...activeDeliveries]);
   }
-  function launchTick(){void tick().catch(error=>console.error('SRE worker:',redact(error.message)));}
+  function launchActions(){if(!stopped&&!activeActions)void actions().catch(error=>console.error('SRE actions:',redact(error.message)));}
+  function launchTick(){void investigate().then(launchActions).catch(error=>console.error('SRE worker:',redact(error.message)));}
   function launchCommands(){void commands().catch(error=>console.error('SRE commands:',redact(error.message)));}
   function launchPoll(){void poll().catch(error=>console.error('SRE polling:',redact(error.message)));}
   function launchObserve(){if(!stopped)void operations.observe().catch(error=>console.error('SRE operational checks:',redact(error.message)));}
@@ -123,7 +161,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         const html=await readFile(new URL('../sre-web/index.html',import.meta.url));
         res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'"});return res.end(html);
       }
-      if(req.method==='GET'&&['/app.js','/incident-view.js','/conversation-history.js','/delivery-inspection.js','/style.css'].includes(path)) {
+      if(req.method==='GET'&&['/app.js','/incident-view.js','/conversation-history.js','/teams-request.js','/qa-history.js','/delivery-inspection.js','/style.css'].includes(path)) {
         const asset=await readFile(new URL('../sre-web'+path,import.meta.url));
         res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript':'text/css','x-content-type-options':'nosniff'});return res.end(asset);
       }
@@ -182,20 +220,25 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         const connectionSources=['dynatrace','dynatraceLogs','github','gitlab','jira','servicenow'],connectionIds=config.services.flatMap(service=>connectionSources.map(source=>source+':'+service.key));
         const checkpoints=connectionIds.length?await store.db.query('SELECT id,value FROM sre_checkpoints WHERE id IN ('+connectionIds.map(()=>'?').join(',')+')',connectionIds):[];
         const operationReport=await operations.snapshot();
-        const connections=config.services.flatMap(service=>connectionSources.map(source=>({service:service.key,source,enabled:Boolean(service[source]?.enabled),...(source==='servicenow'?{transport:simulation&&config.simulationMcp?'mcp-mock':service.servicenow?.transport||'rest'}:{}),checkpoint:checkpoints.find(x=>x.id===source+':'+service.key)?.value||null})));
+        const countsByService=snapshot.countsByService.filter(row=>config.services.some(service=>service.key===row.service_key));
+        const connections=config.services.flatMap(service=>connectionSources.map(source=>({service:service.key,source,enabled:Boolean(service[source]?.enabled),eventCount:countsByService.find(row=>row.service_key===service.key&&row.source===(source==='dynatraceLogs'?'dynatrace-logs':source))?.count??0,...(source==='servicenow'?{transport:simulation&&config.simulationMcp?'mcp-mock':service.servicenow?.transport||'rest'}:{}),checkpoint:checkpoints.find(x=>x.id===source+':'+service.key)?.value||null})));
         for(const connection of connections)connection.health=connectionReadHealth(connection,operationReport);
         const simulationConversations=simulation?config.services[0].teams.conversations.map(id=>({id,name:roomScope(config.services[0],id).name})):[];
         const conversations=await store.db.query("SELECT c.id,c.tenant_id,c.conversation_id,c.service_key,c.incident_id,c.enabled,c.reference,label.value AS room_label FROM sre_conversations c LEFT JOIN sre_checkpoints label ON label.id='teams-room-label:'||c.id");
-        return send(200,{...snapshot,operations:operationReport,connections,conversations:conversations.map(({reference,room_label,...room})=>({...room,name:conversationDisplayName(config.services.find(service=>service.key===room.service_key),{...room,reference},room_label)})),mode:config.mode,agentMode:config.agentMode,agentDevelopment:config.agentDevelopment===true,teamsMode:config.teamsMode,services:config.services.map(s=>({key:s.key,name:s.name,environment:s.environment})),simulation,simulationGuide:simulation?config.simulationGuide||null:null,simulationConversations,simulationConversationId:simulation?config.services[0].teams.conversations[0]:null});
+        return send(200,{...snapshot,countsByService,operations:operationReport,recovery:consoleRecovery(operationReport.recovery),connections,conversations:conversations.map(({reference,room_label,...room})=>({...room,name:conversationDisplayName(config.services.find(service=>service.key===room.service_key),{...room,reference},room_label)})),mode:config.mode,agentMode:config.agentMode,agentDevelopment:config.agentDevelopment===true,teamsMode:config.teamsMode,services:config.services.map(s=>({key:s.key,name:s.name,environment:s.environment})),simulation,simulationGuide:simulation?config.simulationGuide||null:null,simulationConversations,simulationConversationId:simulation?config.services[0].teams.conversations[0]:null});
       }
-      const incidentRoute=path.match(/^\/api\/incidents\/(inc_[a-f0-9]+)(\/questions)?$/);
+      const instructionRoute=path.match(/^\/api\/incidents\/(inc_[a-f0-9]+)\/teams-instructions(?:\/([a-f0-9]{64}))?$/);
+      if(simulation&&req.method==='GET'&&instructionRoute){const result=instructionRoute[2]?await store.recordedTeamsInstruction(instructionRoute[1],instructionRoute[2]):await store.listTeamsInstructions(instructionRoute[1],{cursor:url.searchParams.get('cursor')});return send(200,consoleReceipt(result));}
+      const qaRoute=path.match(/^\/api\/incidents\/(inc_[a-f0-9]+)\/qa-requests(?:\/([^/]+))?$/);
+      if(req.method==='GET'&&qaRoute){const result=qaRoute[2]?await casework.qaRequest(qaRoute[1],qaRoute[2]):await casework.qaRequests(qaRoute[1],{cursor:url.searchParams.get('cursor')});return send(200,consoleReceipt(result));}
+      const incidentRoute=path.match(/^\/api\/incidents\/(inc_[a-f0-9]+)(\/questions|\/question-requests)?$/);
       if(incidentRoute) {
-        const context=await store.context(incidentRoute[1]);const service=config.services.find(x=>x.key===context.incident.service_key);
-        if(req.method==='GET'&&!incidentRoute[2])return send(200,{...context,casework:await casework.snapshot(context.incident.id,context),conversation:await store.conversation(context.incident.id),rollback:assessRollback(context,service,await store.coordinationNow())});
         if(req.method==='POST'&&incidentRoute[2]) {
-          const input=decode(await body(req));const text=assertText(input.text,'question',4000);
-          return send(202,await store.ingest({id:randomUUID(),source:'operator-api',serviceKey:service.key,incidentId:context.incident.id,kind:'question',at:await store.coordinationNow(),payload:{text}}));
+          const input=decode(await body(req));
+          return send(202,consoleReceipt(await store.askQuestion({incidentId:incidentRoute[1],text:input.text,requestId:input.requestId===undefined&&incidentRoute[2]==='/questions'?randomUUID():input.requestId})));
         }
+        const context=await store.context(incidentRoute[1]);const service=config.services.find(x=>x.key===context.incident.service_key);
+        if(req.method==='GET'&&!incidentRoute[2])return send(200,{...context,casework:await casework.snapshot(context.incident.id,context),conversation:await store.conversation(context.incident.id),rollback:assessRollback(context,service,await store.coordinationNow()),recovery:consoleRecovery(restoreSummary(context.recoveryFence))});
       }
       const correctionRoute=path.match(/^\/api\/incidents\/(inc_[a-f0-9]+)\/changes\/(withdraw|reconsider)$/);
       if(req.method==='POST'&&correctionRoute){
@@ -231,15 +274,17 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         if(config.agentDevelopment)throw fail(403,'Legacy auction seeding is disabled for Claude development. Supply investigation evidence explicitly.');
         const input=decode(await body(req));return send(202,await seedDemo(store,config.services[0],input.scenario));
       }
-      if(simulation&&req.method==='POST'&&path==='/api/dev/teams') {
-        const input=decode(await body(req));const sample=devActivity(assertText(input.text,'Teams request',4000),config.services[0],{userId:input.userId||'local-operator',displayName:input.displayName||'Local operator',conversationType:input.conversationType||'personal',conversationId:input.conversationId||config.services[0].teams.conversations[0],mentioned:input.mentioned!==false,replyToId:input.replyToId});
+      if(simulation&&req.method==='POST'&&['/api/dev/teams','/api/dev/teams/requests','/api/dev/teams/requests/status'].includes(path)) {
+        const input=decode(await body(req)),observing=path==='/api/dev/teams/requests/status';if((observing||path==='/api/dev/teams/requests')&&input.requestId===undefined)throw fail(400,'A stable Teams request ID is required');
+        const sample=devActivity(assertText(input.text,'Teams request',4000),config.services[0],{userId:input.userId||'local-operator',displayName:input.displayName||'Local operator',conversationType:input.conversationType||'personal',conversationId:input.conversationId||config.services[0].teams.conversations[0],mentioned:input.mentioned!==false,replyToId:input.replyToId});
+        if(observing)return send(200,{...consoleReceipt(await router.simulationRequestStatus(sample.activity,{requestId:input.requestId,expectedIncidentId:input.expectedIncidentId})),simulation:true});
         if(input.expectedIncidentId){
           const expected=await store.context(input.expectedIncidentId);if(expected.incident.service_key!==config.services[0].key)throw fail(409,'The selected incident is outside this simulator service');
-          const key=conversationKey(config.services[0].teams.tenantId,incidentConversation(sample.activity).id),[joined]=await store.db.query('SELECT incident_id FROM sre_conversations WHERE id=? AND enabled=1',[key]);
-          if(joined?.incident_id&&joined.incident_id!==input.expectedIncidentId)throw fail(409,'This conversation follows '+joined.incident_id+'. Select that incident or use a separate thread/chat before sending this message.');
+          if(input.requestId===undefined){const key=conversationKey(config.services[0].teams.tenantId,incidentConversation(sample.activity).id),[joined]=await store.db.query('SELECT incident_id FROM sre_conversations WHERE id=? AND enabled=1',[key]);if(joined?.incident_id&&joined.incident_id!==input.expectedIncidentId)throw fail(409,'This conversation follows '+joined.incident_id+'. Select that incident or use a separate thread/chat before sending this message.');}
           const join=input.text.trim().match(/^join\s+(\S+)/i);if(join&&join[1]!==input.expectedIncidentId)throw fail(409,'Join the selected incident or select the incident you intend to join.');
         }
-        return send(202,{...await router.accept(sample.activity,sample.reference),simulation:true});
+        const receipt=input.requestId===undefined?await router.accept(sample.activity,sample.reference,{includeRestoreReceipt:true,expectedIncidentId:input.expectedIncidentId}):await router.acceptSimulation(sample.activity,sample.reference,{requestId:input.requestId,expectedIncidentId:input.expectedIncidentId});
+        return send(202,{...consoleReceipt(receipt),simulation:true});
       }
       throw fail(404,'Not found');
     }catch(error){
@@ -248,16 +293,19 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
     }
   });
   server.requestTimeout=30000;server.headersTimeout=10000;
-  return {server,store,worker,rollbacks,router,outbox,coordination,casework,inspections,logDetector,poller,operations,tick,poll,commands,deliver,config,teamsAddress:bridge?.server.address(),close(){
+  return {server,store,worker,rollbacks,router,outbox,coordination,casework,inspections,logDetector,poller,operations,tick,investigate,actions,poll,commands,deliver,config,teamsAddress:bridge?.server.address(),close(){
     if(!closePromise) {
       stopped=true;worker.stop();clearInterval(interval);clearInterval(pollInterval);clearInterval(observeInterval);clearInterval(commandInterval);clearInterval(deliveryInterval);operations.stop();
       closePromise=(async()=>{
-        if(server.listening)await new Promise(r=>server.close(r));
-        await outbox.close();
-        await Promise.allSettled([activeTick,activePoll,activeCommands,...activeDeliveries,operations.drain()]);
-        await bridge?.close();await worker.close();
-        await Promise.allSettled([...new Set([...connectors.values()].flatMap(clients=>Object.values(clients)))].map(client=>client.close?.()));
-        await store.db.close();
+        const failures=[],cleanup=async task=>{try{await task();}catch(error){failures.push(error);}};
+        if(server.listening)await cleanup(()=>new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+        await Promise.all([cleanup(()=>outbox.close()),cleanup(()=>casework.close())]);
+        await Promise.allSettled([activeTick,activeInvestigation,activeActions,activePoll,activeCommands,...activeDeliveries,operations.drain()]);
+        await cleanup(()=>bridge?.close());await cleanup(()=>worker.close());
+        await Promise.all([...new Set([...connectors.values()].flatMap(clients=>Object.values(clients)))].map(client=>cleanup(()=>client.close?.())));
+        await cleanup(()=>store.db.close());
+        if(failures.length===1)throw failures[0];
+        if(failures.length)throw new AggregateError(failures,'SRE shutdown completed cleanup with failures',{cause:failures[0]});
       })();
     }
     return closePromise;

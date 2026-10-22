@@ -1,4 +1,9 @@
 import {issueSpecMarkdown,remediationText} from './agent-investigation.mjs';
+import {QaExecution} from './qa-execution.mjs';
+import {assessmentHash,planAssessmentCurrent} from './qa-assessment.mjs';
+import {sourceInventoryText} from './source-inventory.mjs';
+import {discoveryProject} from './source-discovery-config.mjs';
+import {discoverySummaryText} from './source-discovery.mjs';
 import {handoffText} from './work-handoffs.mjs';
 import {randomBytes} from 'node:crypto';
 import {hash,assertText,redact,equalSecret} from './security.mjs';
@@ -9,6 +14,15 @@ import {changeTimelineLimits,projectChangeTimeline,changeTimelineText,parseChang
 import {reserveCiHistory} from './ci-history-window.mjs';
 import {contactsText,contactMessageText,contactWindowText,contactNoticeVersion,boundTeamsText,readContactMessage} from './contact-messages.mjs';
 import {qaApprovalCommand,assertQaCommandClaim,qaApprovalReceipt,recordQaApprovalReceipt,deliveredQaProposal} from './qa-approval.mjs';
+import {planCollaborationSnapshot,planCollaborationMarkdown} from './plan-collaboration.mjs';
+import {readQaHistory,readQaRequest} from './qa-history.mjs';
+import {unverifiedLogFields} from './log-field-consistency.mjs';
+import {validateSourceFindings,sourceFindingInput} from './source-references.mjs';
+import {boundedContext} from './model-context.mjs';
+import {sourceScopeForService,sourcePath} from './source-evidence.mjs';
+import {readSourceIdentityHistory} from './source-identity-history.mjs';
+import {evidenceReadText} from './evidence-request.mjs';
+import {evidenceReadHistoryWarning} from './evidence-read-history.mjs';
 export {contactsText} from './contact-messages.mjs';
 
 const sha=value=>typeof value==='string'&&/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
@@ -16,7 +30,7 @@ const epoch=value=>Number.isSafeInteger(value)&&value>=0;
 const lock=store=>store.db.dialect==='postgres'?' FOR UPDATE':'';
 const parse=row=>row?{...row,payload:JSON.parse(row.payload)}:null;
 const md=value=>String(redact(String(value??''))).replace(/[\r\n]+/g,' ').replace(/[\\`*_{}\[\]<>|#]/g,'\\$&');
-const contactFacts=view=>({directoryId:view?.directoryId??null,contacts:(view?.contacts||[]).map(contact=>Object.fromEntries(['id','name','team','role','contact','paths','startsAt','endsAt','reason','directoryId','source','observedAt','expiresAt'].filter(key=>contact[key]!==undefined).map(key=>[key,key==='paths'?[...contact.paths].sort():contact[key]]))).sort((a,b)=>a.id.localeCompare(b.id)),unknowns:[...(view?.unknowns||[])].sort()});
+const contactFacts=view=>({directoryId:view?.directoryId??null,contacts:(view?.contacts||[]).map(contact=>Object.fromEntries(['id','name','team','role','contact','paths','projects','startsAt','endsAt','reason','directoryId','source','observedAt','expiresAt'].filter(key=>contact[key]!==undefined).map(key=>[key,['paths','projects'].includes(key)?[...contact[key]].sort():contact[key]]))).sort((a,b)=>a.id.localeCompare(b.id)),unknowns:[...(view?.unknowns||[])].sort()});
 const contactView=view=>({...view,version:hash([contactFacts(view),view.state,view.observedAt,view.expiresAt,view.validFrom,view.validUntil,view.conflictingDirectoryIds])});
 const contactsCurrent=(saved,current)=>saved?saved.version?saved.version===current.version:hash(contactFacts(saved))===hash(contactFacts(current)):null;
 async function directoryContext(incident,q){
@@ -68,7 +82,12 @@ export async function linkedChangeIncidents(q,event,dialect) {
 }
 
 export class Casework {
-  constructor({store,services,qaAdapter}){Object.assign(this,{store,services,qaAdapter});this.contactsAfter='';}
+  constructor({store,services,qaAdapter,qaOptions}){
+    Object.assign(this,{store,services,qaAdapter});this.contactsAfter='';
+    this.qaExecution=new QaExecution({adapter:qaAdapter,timeoutMs:qaOptions?.timeoutMs,onLate:(id,outcome,execution)=>this.store.db.transaction(q=>this.event(q,id,'late-result',{result:outcome.kind==='result'?redact(outcome.result):null,error:outcome.kind==='error'?redact(String(outcome.error.message||outcome.error)):null,execution,note:'Late executor evidence only; the interrupted request remains unknown and is not replayed.'}))});
+  }
+  qaState(){return this.qaExecution.state();}
+  close(){return this.qaExecution.close();}
   service(key){const service=this.services.find(s=>s.key===key);if(!service)throw Error('Unknown service');return service;}
   async importDirectory(serviceKey,input) {
     this.service(serviceKey);const now=await this.store.coordinationNow();
@@ -81,6 +100,7 @@ export class Casework {
       if(ids.has(e.id))throw Error('Duplicate directory identity');ids.add(e.id);
       if(!['service-owner','component-owner','on-call','escalation'].includes(e.role))throw Error('Unknown ownership role');
       if(!Array.isArray(e.paths)||e.paths.length>20||e.paths.some(p=>typeof p!=='string'||!p||p.startsWith('/')||p.split('/').includes('..')||p.length>150))throw Error('Use repository-relative ownership paths');
+      if(e.projects!==undefined&&(!Array.isArray(e.projects)||!e.projects.length||e.projects.length>4||e.projects.some(project=>!discoveryProject(project))||new Set(e.projects).size!==e.projects.length))throw Error('Ownership projects must name one to four distinct GitLab selectors');
       if(e.role==='on-call'&&(!epoch(e.startsAt)||!epoch(e.endsAt)||e.endsAt<=e.startsAt))throw Error('On-call entry needs an explicit shift window');
     }
     const content=redact({source:input.source,observedAt:input.observedAt,expiresAt:input.expiresAt,entries:input.entries});
@@ -96,20 +116,29 @@ export class Casework {
     const rows=await query('SELECT * FROM sre_directory_snapshots WHERE service_key=? ORDER BY observed_at DESC,id DESC LIMIT 2',[context.incident.service_key]);
     if(!rows.length)return contactView({state:'missing',directoryId:null,observedAt:null,expiresAt:null,validFrom:null,validUntil:null,contacts:[],unknowns:['No ownership directory is configured. Ask the incident lead for the service owner; commit authors are not assumed to be on call.']});
     if(rows.length>1&&Number(rows[0].observed_at)===Number(rows[1].observed_at)&&rows[0].id!==rows[1].id)return contactView({state:'conflicting',directoryId:null,observedAt:Number(rows[0].observed_at),expiresAt:null,validFrom:null,validUntil:null,conflictingDirectoryIds:rows.map(row=>row.id).sort(),contacts:[],unknowns:['Conflicting directory snapshots have the same timestamp. Reconcile ownership before selecting a contact.']});
-    const row=rows[0],snapshot=JSON.parse(row.payload),paths=[...new Set((context.incident.analysis?.codeReview?.findings||context.incident.analysis?.codeFindings||[]).map(f=>f.path))];
+    const row=rows[0],snapshot=JSON.parse(row.payload),policyPaths=[...(context.incident.analysis?.codeReview?.findings||[]),...(context.incident.analysis?.codeFindings||[])].map(f=>f.path),sourceScope=sourceScopeForService(this.service(context.incident.service_key));
+    const savedSources=(context.incident.analysis?.sourceFindings||[]).filter(f=>f.verifiedLocation===true&&f.provider==='gitlab'&&(f.project===sourceScope?.project||f.mappingCandidate===true&&sourceScope?.discovery?.projects.includes(f.project))&&sha(f.sha)&&sourcePath(f.path));
+    const identityHistory=savedSources.length?await readSourceIdentityHistory(this.store,{...context,sourceScope},savedSources,query):null;
+    const sourceFindings=savedSources.filter(f=>identityHistory.identities.some(identity=>identity.project===f.project&&identity.sha===f.sha&&identity.path===f.path&&identity.state==='consistent'&&identity.sourceContentHashes.includes(f.sourceContentHash)));
+    const citedPaths=sourceFindings.filter(f=>f.project===sourceScope?.project).map(f=>f.path),paths=[...new Set([...policyPaths,...citedPaths])],candidatePaths=sourceFindings.filter(f=>f.mappingCandidate===true&&sourceScope?.discovery?.projects.includes(f.project)).map(f=>({project:f.project,path:f.path}));
     const metadata={directoryId:row.id,source:row.source,observedAt:Number(row.observed_at),expiresAt:Number(row.expires_at)};
     const fence=await this.store.restoreFence(query);
     if(fence&&(snapshot.restoreId!==fence.restoreId||Number(row.observed_at)<fence.preparedAt))return contactView({...metadata,state:'restore-historical',validFrom:null,validUntil:null,contacts:[],unknowns:['Database restoration may have lost ownership or roster changes. Import a fresh directory observation after reconciliation; the restored snapshot is historical.']});
     if(Number(row.expires_at)<=now)return contactView({...metadata,state:'expired',validFrom:null,validUntil:Number(row.expires_at),contacts:[],unknowns:['The latest ownership directory is expired. Do not assume its old on-call assignment is current.']});
     const match=(prefix,path)=>path===prefix||path.startsWith(prefix.endsWith('/')?prefix:prefix+'/');
-    const candidates=snapshot.entries.filter(e=>e.role!=='on-call'||e.startsAt<=now&&e.endsAt>now).filter(e=>e.role!=='component-owner'||paths.some(p=>e.paths.some(prefix=>match(prefix,p))));
+    const matchesFixed=(e,path)=>(!e.projects||e.projects.includes(String(this.service(context.incident.service_key).gitlab?.project||'')))&&e.paths.some(prefix=>match(prefix,path));
+    const matchesCandidate=(e,item)=>Array.isArray(e.projects)&&e.projects.includes(item.project)&&e.paths.some(prefix=>match(prefix,item.path));
+    const candidates=snapshot.entries.filter(e=>e.role!=='on-call'||e.startsAt<=now&&e.endsAt>now).filter(e=>e.role!=='component-owner'||paths.some(p=>matchesFixed(e,p))||candidatePaths.some(item=>matchesCandidate(e,item)));
     const historical=context.assessmentStatus&&context.assessmentStatus.state!=='current';
-    const contacts=candidates.map(e=>({...e,...metadata,reason:e.role==='component-owner'?(historical?'Owns a path implicated by a saved assessment; the current review is pending':'Owns an implicated source path'):e.role==='on-call'?'Named in the active shift window':e.role==='service-owner'?'Named accountable service owner':'Named escalation contact; contact if the primary owner is unavailable'}));
+    const contacts=candidates.map(e=>({...e,...metadata,reason:e.role==='component-owner'?(candidatePaths.some(item=>matchesCandidate(e,item))?'Runtime mapping is unverified; recorded owner of candidate project/path '+candidatePaths.filter(item=>matchesCandidate(e,item)).map(item=>item.project+'/'+item.path).join(', '):historical?'Owns a path implicated by a saved assessment; the current review is pending':policyPaths.some(path=>e.paths.some(prefix=>match(prefix,path)))?'Owns an implicated source path':'Owns a cited source path; its location is verified, cause remains a hypothesis'):e.role==='on-call'?'Named in the active shift window':e.role==='service-owner'?'Named accountable service owner':'Named escalation contact; contact if the primary owner is unavailable'}));
     const unknowns=contacts.length?[]:['No applicable owner or active on-call shift is present. Ask the incident lead; do not infer ownership from participation.'];
+    if(sourceFindings.length!==savedSources.length)unknowns.push('Saved source locations have conflicting or unverified retained bytes. Their component-owner recommendations are withheld pending a current source review; service ownership and roster evidence remain independent.');
     const roster=snapshot.entries.filter(e=>e.role==='on-call'),active=contacts.filter(e=>e.role==='on-call');
     if(roster.length&&!active.length)unknowns.push('No active on-call shift is listed. Verify the roster with the named service owner or escalation contact.');
     if(active.length>1)unknowns.push('More than one on-call shift is active. Confirm primary coverage; this directory provides no priority.');
-    if(paths.some(path=>contacts.filter(e=>e.role==='component-owner'&&e.paths.some(prefix=>match(prefix,path))).length>1))unknowns.push('Multiple component owners match an implicated path. Confirm the lead with the listed teams; no ownership priority is provided.');
+    if(paths.some(path=>contacts.filter(e=>e.role==='component-owner'&&matchesFixed(e,path)).length>1))unknowns.push('Multiple component owners match an implicated path. Confirm the lead with the listed teams; no ownership priority is provided.');
+    if(candidatePaths.some(item=>contacts.filter(e=>e.role==='component-owner'&&matchesCandidate(e,item)).length>1))unknowns.push('Multiple component owners match a candidate project/path; confirm its runtime mapping and lead.');
+    if(candidatePaths.length)unknowns.push('Candidate project/path ownership does not establish the running repository. Verify the runtime mapping before selecting a repair or deployment owner.');
     const boundaries=roster.flatMap(e=>[e.startsAt,e.endsAt]);
     return contactView({...metadata,state:'current',validFrom:Math.max(metadata.observedAt,...boundaries.filter(at=>at<=now)),validUntil:Math.min(metadata.expiresAt,...boundaries.filter(at=>at>now)),contacts,unknowns});
   }
@@ -163,9 +192,9 @@ export class Casework {
       return renderedText;
     });
   }
-  async linkChange(incidentId,provider,number,evidenceId) {
+  async linkChange(incidentId,provider,number,evidenceId,query) {
     if(!['github','gitlab'].includes(provider)||!/^\d+$/.test(String(number)))throw Error('Invalid change link');
-    return this.store.db.transaction(async q=>{
+    const apply=async q=>{
       const [incident]=await q('SELECT id,issue_key FROM sre_incidents WHERE id=?'+lock(this.store),[incidentId]);if(!incident)throw Error('Unknown incident');
       const [evidence]=await q('SELECT id FROM sre_evidence WHERE id=? AND incident_id=? AND source=?',[evidenceId,incidentId,provider]);if(!evidence)throw Error('Change link requires evidence from this incident');
       if(!await automaticAssociationAllowed(q,incident,provider,String(number)))return {suppressed:true};
@@ -174,7 +203,7 @@ export class Casework {
         await q('UPDATE sre_incidents SET revision=revision+1 WHERE id=?',[incidentId]);
         await q("INSERT INTO sre_jobs(id,incident_id,payload,status,attempts,next_at,created_at) VALUES(?,?,?,'pending',0,?,?) ON CONFLICT DO NOTHING",[hash(['track-change',incidentId,provider,String(number)]),incidentId,JSON.stringify({changeLink:provider+':'+number}),now,now]);
       }
-    });
+    };return query?apply(query):this.store.db.transaction(apply);
   }
   trackChange(incidentId,provider,number,actor,options){return trackAssociation(this.store,this.services,incidentId,provider,number,actor,options);}
   withdrawChange(incidentId,provider,number,actor,options){return withdrawAssociation(this.store,this.services,incidentId,provider,number,actor,options);}
@@ -205,23 +234,29 @@ export class Casework {
   }
   async createPlan(incidentId,{originConversationKey=null}={}) {
     const context=await this.store.context(incidentId),analysis=context.incident.analysis;
+    if(context.recoveryFence?.active)throw Error('Fix planning is held during restore reconciliation');
     if(!analysis)throw Error('Wait for an assessment before drafting a fix plan');
+    const draftingAnalysisHash=hash(analysis);
     if(context.assessmentStatus?.state!=='current')throw Error('Assessment is stale or unaudited; wait for a current review before drafting a fix plan');
+    if(unverifiedLogFields(context)&&analysis.changeAssessment!=='unknown')throw Error('Current log fields are contradictory or malformed; request a fresh investigation before drafting a fix plan');
+    const sourceFindings=analysis.sourceFindings?.length?validateSourceFindings(sourceFindingInput(analysis.sourceFindings),context,boundedContext(context)):[];
     const contacts=await this.contacts(incidentId,context),timeline=await this.timeline(incidentId,context);
     const [assessment]=await this.store.db.query('SELECT revision FROM sre_assessments WHERE incident_id=? ORDER BY revision DESC,evaluated_at DESC,id DESC LIMIT 1',[incidentId]);
     if(Number(assessment?.revision)!==Number(context.incident.revision))throw Error('Assessment is stale; wait for the current investigation before drafting');
     const findings=analysis.codeReview?.findings||(analysis.codeFindings||[]).map(f=>({...f,baseSha:context.evidence.find(e=>e.id===f.evidenceId)?.content?.baseSha||null,headSha:f.sha,signal:'MODEL_HYPOTHESIS',issue:f.explanation})),fixes=findings.filter(f=>supportedFixes[f.signal]&&f.headSha===analysis.candidateSha);
     const patch=analysis.changeAssessment==='likely'&&fixes.length===1?{signal:fixes[0].signal,path:fixes[0].path,baseSha:fixes[0].baseSha,headSha:fixes[0].headSha,evidenceId:fixes[0].evidenceId,field:supportedFixes[fixes[0].signal][0],value:supportedFixes[fixes[0].signal][1]}:null;
-    const collaboration=context.collaboration.rooms.map(r=>({key:r.key,name:r.name,reportedStatus:r.reportedStatus,stateReports:r.stateReports,omittedStateReports:r.omittedStateReports,work:r.work.map(w=>({key:w.key,state:w.state,author:w.author,evidenceId:w.evidenceId,participantKey:w.participantKey,currentForAuthor:w.currentForAuthor})),theories:r.theories.map(t=>({key:t.key,state:t.state,author:t.author,evidenceId:t.evidenceId,participantKey:t.participantKey,currentForAuthor:t.currentForAuthor}))}));
+    const reportedContext=planCollaborationSnapshot(context.collaboration),{rooms:collaboration,...collaborationContext}=reportedContext;
     const signalGroups=(context.signalDigest?.groups||[]).slice(0,6);
-    const payload={incidentId,serviceKey:context.incident.service_key,revision:Number(context.incident.revision),summary:analysis.summary,assessment:analysis.changeAssessment,candidateSha:analysis.candidateSha,findings,issueSpec:analysis.issueSpec||null,remediation:analysis.remediation||null,patch,contacts,timeline,collaboration,handoffs:context.collaboration.handoffs||[],handoffCoverage:context.collaboration.handoffCoverage||null,signalGroups,evidenceIds:analysis.evidenceIds,unknowns:analysis.unknowns,coverage:context.signalDigest?.coverage,rollback:analysis.rollback};
+    const payload={incidentId,serviceKey:context.incident.service_key,revision:Number(context.incident.revision),summary:analysis.summary,...(sourceFindings.length?{sourceFindings}:{}),...(analysis.sourceDiscovery?{sourceDiscovery:analysis.sourceDiscovery}:{}),...(analysis.sourceInventories?{sourceInventories:analysis.sourceInventories}:{}),...(analysis.evidenceAcquisition?{evidenceAcquisition:analysis.evidenceAcquisition}:{}),assessment:analysis.changeAssessment,candidateSha:analysis.candidateSha,findings,...(analysis.codeFindings?.length?{codeFindings:analysis.codeFindings}:{}),issueSpec:analysis.issueSpec||null,remediation:analysis.remediation||null,patch,contacts,timeline,collaboration,collaborationContext,handoffs:context.collaboration.handoffs||[],handoffCoverage:context.collaboration.handoffCoverage||null,signalGroups,incidentScope:context.signalDigest?.incidentScope||null,evidenceIds:analysis.evidenceIds,unknowns:analysis.unknowns,coverage:context.signalDigest?.coverage,rollback:analysis.rollback};
+    payload.assessmentHash=assessmentHash(analysis);
     const contextHash=hash(payload),id='plan_'+hash([incidentId,contextHash]).slice(0,24);
-    let markdown=['# Fix ticket: '+md(context.incident.title),'','Ticket: `'+id+'`','Incident: `'+incidentId+'` · revision '+payload.revision,'Status: proposed; human review required. This is a Markdown ticket, not a created Jira/ServiceNow record.','','## Problem and evidence',md(analysis.summary),'Assessment: '+md(analysis.changeAssessment)+'; candidate: `'+(analysis.candidateSha||'unknown')+'`.',...findings.map(f=>'- '+md(f.signal)+': '+md(f.issue)+' (`'+md(f.path)+'`, `'+md(f.baseSha)+'` → `'+md(f.headSha)+'`; evidence `'+md(f.evidenceId)+'`).'),'','## Observed log samples',...signalGroups.map(g=>'- '+md(g.level)+' '+md(g.code||g.errorType||'unclassified')+' · '+md(g.region||'region unknown')+' · `'+md(g.version||'release unknown')+'`: '+md(g.message)+'; evidence '+g.evidenceIds.map(id=>'`'+md(id)+'`').join(', ')),signalGroups.length?'These are bounded observations, not total failures or unique affected users.':'No log sample in this snapshot; request the relevant source window.','','## Who to contact',...contactWindowText(contacts).map(md),...contacts.contacts.map(c=>'- '+md(c.name)+' · '+md(c.team)+' · '+md(c.role)+' · '+md(c.contact)+'. '+md(c.reason)+'; directory `'+c.directoryId+'`.'),...contacts.unknowns.map(u=>'- Unknown: '+md(u)),'','## Proposed implementation',patch?'Restore `'+patch.field+'` to `'+patch.value+'` in `'+patch.path+'` on exact head `'+patch.headSha+'`. The local QA adapter supports this one known policy correction; review the diff and business tests.':analysis.issueSpec?md(analysis.issueSpec.proposedChange):'No automatic patch is supported by the current evidence. Collect discriminating traces and exact source/rollout identity; prepare a reviewed forward fix.','','## Acceptance checks','- Reproduce the affected business invariant on the exact faulty revision.','- Run the same invariant against the proposed fix; retain test output and immutable commit identity.','- Check unaffected behavior, deployment compatibility and data repair separately.','- Do not infer recovery from health probes, MR merge or a successful CI job.','','## Collaboration and change tracking',...(context.collaboration.handoffs||[]).map(h=>'- '+md(handoffText(h))+' Retained release report `'+md(h.release.evidenceId)+'`'+(h.owner?'; owner report `'+md(h.owner.evidenceId)+'`':'')+(h.completion?'; completion report `'+md(h.completion.evidenceId)+'`':'')+'.'),...(context.collaboration.handoffCoverage?.omitted?['- '+context.collaboration.handoffCoverage.omitted+' additional handoff records are outside this bounded snapshot; request missing work evidence.']:[]),...context.collaboration.rooms.map(r=>'- '+md(r.name)+': '+md(r.reportedStatus||'no report')+'. '+r.work.map(w=>md(w.key)+' '+md(w.state)+' by '+md(w.author)+(w.currentForAuthor===false?' (historical claim; responder updated elsewhere)':'')).join('; ')),...context.collaboration.rooms.flatMap(r=>(r.stateReports||[]).map(report=>'- State claim in '+md(r.name)+': '+md(report.author)+' reports '+md(report.state)+' at '+new Date(report.at).toISOString()+'; unverified'+(report.stale?', old report':'')+'; evidence `'+md(report.evidenceId)+'`.')),...timeline.links.filter(l=>l.association).map(l=>'- Context association: '+md(l.provider)+' #'+md(l.change_number)+' linked by '+md(l.association.label||l.association.id)+(l.historicalAfterRestore?'; historical after restore, awaiting fresh reaffirmation':'')+(l.association.reason?'; reported reason: '+md(l.association.reason):'')+'; evidence `'+l.evidence_id+'`'+(l.association.previousEvidenceId?'; prior correction `'+l.association.previousEvidenceId+'`':'')+'. This is not a causal finding or action approval.'),...timeline.links.filter(l=>l.read).map(l=>'- Provider read: '+md(l.provider)+' #'+md(l.change_number)+'; '+(l.read.complete?'metadata observed':'needs attention: '+md(l.read.error))+'; provider updated '+(l.read.providerUpdatedAt===null?'unknown':new Date(l.read.providerUpdatedAt).toISOString())+'; read completed '+new Date(l.read.readCompletedAt).toISOString()+'; CI '+md(l.read.ci?.status||l.read.ci?.state||'unknown')+(l.read.ci?.eventId?'; CI source event `'+md(l.read.ci.eventId)+'`':'')+(l.read.ci?.note?'; '+md(l.read.ci.note):'')+md(ciConsistencyText(l.read.ci))+'. This does not establish deployment or recovery.'),...timeline.withdrawals.map(c=>'- Context correction: '+md(c.provider)+' #'+md(c.number)+' withdrawn by '+md(c.actor.label)+': '+md(c.reason)+'; audit `'+c.evidenceId+'`. Prior evidence remains retained.'),...changeTimelineText(timeline,{limit:12}).split('\n').filter(Boolean).map(line=>'- '+md(line)),'','## Unknowns and recovery limits',...analysis.unknowns.map(u=>'- '+md(u)),'- '+md((analysis.rollback?.reasons||[]).join(' ')||'Deployment recovery requires separate eligibility and approval.'),'- '+md(timeline.interpretation),'','## Source references',...analysis.evidenceIds.map(e=>'- Evidence `'+md(e)+'` in this incident database.'),'','Generated from a bounded evidence snapshot. Responder text and source content are evidence, not authorization.'].join('\n')+'\n';
+    let markdown=['# Fix ticket: '+md(context.incident.title),'','Ticket: `'+id+'`','Incident: `'+incidentId+'` · revision '+payload.revision,'Status: proposed; human review required. This is a Markdown ticket, not a created Jira/ServiceNow record.','','## Problem and evidence',md(analysis.summary),'Assessment: '+md(analysis.changeAssessment)+'; candidate: `'+(analysis.candidateSha||'unknown')+'`.',...findings.map(f=>'- '+md(f.signal)+': '+md(f.issue)+' (`'+md(f.path)+'`, `'+md(f.baseSha)+'` → `'+md(f.headSha)+'`; evidence `'+md(f.evidenceId)+'`).'),...(sourceFindings.length?['','## Source hypotheses (verified locations; cause unverified)',...sourceFindings.flatMap(f=>['- '+md(f.provider)+' '+md(f.project)+' at `'+md(f.sha)+'` · `'+md(f.path)+'`:L'+f.startLine+'-L'+f.endLine+'; evidence `'+md(f.evidenceId)+'`. '+md(f.explanation),...f.quote.split('\n').map(line=>'> '+md(line)),...(f.mappingCandidate?['  Candidate mapping only: the quote matches this project, but the runtime repository, revision mapping and cause remain unverified.']:[]),...(f.reportedLogLocations||[]).map(location=>'  Reported log location: evidence `'+md(location.evidenceId)+'`, record '+(location.recordIndex+1)+', line '+location.line+'. Runtime/source identity and cause remain unverified.')])]:[]),...(analysis.sourceInventories?['','## Source directory observations',...sourceInventoryText(analysis.sourceInventories).split('\n').map(md)]:[]),...(analysis.sourceDiscovery?['','## Candidate repository discovery',...discoverySummaryText(analysis.sourceDiscovery).split('\n').map(md)]:[]),'','## Observed log samples',...(payload.incidentScope?.state==='reported'?['Reported monitor impact scope: '+md(payload.incidentScope.environment)+' / '+md(payload.incidentScope.region)+' / `'+md(payload.incidentScope.version)+'`; observed '+new Date(payload.incidentScope.observedAt).toISOString()+'; scope evidence `'+md(payload.incidentScope.evidenceId)+'`.','Different or unknown scopes remain dependency/request alternatives; compare relationships before connecting or excluding them. Scope does not establish cause, completeness or recovery.']:payload.incidentScope?['Monitor impact scope is unverified. Service-level observations may describe several incidents.']:[]),...signalGroups.map(g=>'- '+md(g.level)+' '+md(g.code||g.errorType||'unclassified')+' · '+md(g.region||'region unknown')+' · `'+md(g.version||'release unknown')+'`'+(payload.incidentScope?.state==='reported'?' · '+md(g.scopeRelation||'unknown')+' reported scope':'')+(g.metadataIssues?.length?' · Unverified log fields: '+md(g.metadataIssues.join(', ')):'')+': '+md(g.message)+'; evidence '+g.evidenceIds.map(id=>'`'+md(id)+'`').join(', ')),signalGroups.length?'These are bounded observations, not total failures or unique affected users.':'No log sample in this snapshot; request the relevant source window.','','## Who to contact',...contactWindowText(contacts).map(md),...contacts.contacts.map(c=>'- '+md(c.name)+' · '+md(c.team)+' · '+md(c.role)+' · '+md(c.contact)+'. '+md(c.reason)+'; directory `'+c.directoryId+'`.'),...contacts.unknowns.map(u=>'- Unknown: '+md(u)),'','## Proposed implementation',patch?'Restore `'+patch.field+'` to `'+patch.value+'` in `'+patch.path+'` on exact head `'+patch.headSha+'`. The local QA adapter supports this one known policy correction; review the diff and business tests.':'No automatic patch is supported by the current evidence. Collect discriminating traces and exact source/rollout identity; prepare a reviewed forward fix.','','## Acceptance checks','- Reproduce the affected business invariant on the exact faulty revision.','- Run the same invariant against the proposed fix; retain test output and immutable commit identity.','- Check unaffected behavior, deployment compatibility and data repair separately.','- Do not infer recovery from health probes, MR merge or a successful CI job.','','## Collaboration and change tracking',...(context.collaboration.handoffs||[]).map(h=>'- '+md(handoffText(h))+' Retained release report `'+md(h.release.evidenceId)+'`'+(h.owner?'; owner report `'+md(h.owner.evidenceId)+'`':'')+(h.completion?'; completion report `'+md(h.completion.evidenceId)+'`':'')+'.'),...(context.collaboration.handoffCoverage?.omitted?['- '+context.collaboration.handoffCoverage.omitted+' additional handoff records are outside this bounded snapshot; request missing work evidence.']:[]),...planCollaborationMarkdown(reportedContext),...timeline.links.filter(l=>l.association).map(l=>'- Context association: '+md(l.provider)+' #'+md(l.change_number)+' linked by '+md(l.association.label||l.association.id)+(l.historicalAfterRestore?'; historical after restore, awaiting fresh reaffirmation':'')+(l.association.reason?'; reported reason: '+md(l.association.reason):'')+'; evidence `'+l.evidence_id+'`'+(l.association.previousEvidenceId?'; prior correction `'+l.association.previousEvidenceId+'`':'')+'. This is not a causal finding or action approval.'),...timeline.links.filter(l=>l.read).map(l=>'- Provider read: '+md(l.provider)+' #'+md(l.change_number)+'; '+(l.read.complete?'metadata observed':'needs attention: '+md(l.read.error))+'; provider updated '+(l.read.providerUpdatedAt===null?'unknown':new Date(l.read.providerUpdatedAt).toISOString())+'; read completed '+new Date(l.read.readCompletedAt).toISOString()+'; CI '+md(l.read.ci?.status||l.read.ci?.state||'unknown')+(l.read.ci?.eventId?'; CI source event `'+md(l.read.ci.eventId)+'`':'')+(l.read.ci?.note?'; '+md(l.read.ci.note):'')+md(ciConsistencyText(l.read.ci))+'. This does not establish deployment or recovery.'),...timeline.withdrawals.map(c=>'- Context correction: '+md(c.provider)+' #'+md(c.number)+' withdrawn by '+md(c.actor.label)+': '+md(c.reason)+'; audit `'+c.evidenceId+'`. Prior evidence remains retained.'),...changeTimelineText(timeline,{limit:12}).split('\n').filter(Boolean).map(line=>'- '+md(line)),...(analysis.evidenceAcquisition?.outcomes?.length||evidenceReadHistoryWarning(analysis.evidenceAcquisition?.history)?['','## Additional evidence reads',...(analysis.evidenceAcquisition.outcomes||[]).map(item=>'- '+md(evidenceReadText(item))),'Read observations may be historical; they do not establish cause, health, approval or complete source history.',...(evidenceReadHistoryWarning(analysis.evidenceAcquisition?.history)?[evidenceReadHistoryWarning(analysis.evidenceAcquisition.history)]:[])]:[]),'','## Unknowns and recovery limits',...analysis.unknowns.map(u=>'- '+md(u)),'- '+md((analysis.rollback?.reasons||[]).join(' ')||'Deployment recovery requires separate eligibility and approval.'),'- '+md(timeline.interpretation),'','## Source references',...analysis.evidenceIds.map(e=>'- Evidence `'+md(e)+'` in this incident database.'),'','Generated from a bounded evidence snapshot. Responder text and source content are evidence, not authorization.'].join('\n')+'\n';
     if(analysis.remediation)markdown+='\n## Recovery proposal\n'+remediationText(analysis.remediation)+'\n';
     if(analysis.issueSpec)markdown+='\n'+issueSpecMarkdown(analysis.issueSpec)+'\n';
     await this.store.db.transaction(async q=>{
       if((await this.store.restoreFence(q))?.active)throw Error('Fix planning is held during restore reconciliation');
-      const [current]=await q('SELECT revision FROM sre_incidents WHERE id=?'+lock(this.store),[incidentId]);if(Number(current?.revision)!==payload.revision)throw Error('Incident changed while drafting; request a fresh plan');
+      const [current]=await q('SELECT revision,analysis FROM sre_incidents WHERE id=?'+lock(this.store),[incidentId]);if(Number(current?.revision)!==payload.revision)throw Error('Incident changed while drafting; request a fresh plan');
+      if(hash(current.analysis?JSON.parse(current.analysis):null)!==draftingAnalysisHash)throw Error('Assessment changed while drafting; request a fresh plan');
       const checkedContacts=await this.contacts(incidentId,context,q);if(checkedContacts.version!==contacts.version)throw Error('Contact directory or shift window changed while drafting; request a fresh ticket');
       if(originConversationKey){const origin=await this.store.authorizeIncidentConversation(originConversationKey,incidentId,q);if(origin.incident_id!==incidentId)throw Error('The requesting conversation no longer follows this incident');}
       await q('INSERT INTO sre_fix_plans(id,incident_id,context_hash,revision,markdown,payload,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING',[id,incidentId,contextHash,payload.revision,markdown,JSON.stringify(payload),await this.store.coordinationNow(q)]);
@@ -232,6 +267,8 @@ export class Casework {
   }
   async plans(incidentId){return (await this.store.db.query('SELECT * FROM sre_fix_plans WHERE incident_id=? ORDER BY created_at DESC,id DESC LIMIT 20',[incidentId])).map(parse);}
   async getPlan(id,incidentId){const [row]=await this.store.db.query('SELECT * FROM sre_fix_plans WHERE id=? AND incident_id=?',[id,incidentId]);if(!row)throw Error('Plan not found in this incident');return parse(row);}
+  qaRequests(incidentId,options){return readQaHistory(this.store,incidentId,options);}
+  qaRequest(incidentId,id){return readQaRequest(this.store,incidentId,id);}
   async ticketIndex(incidentId,{conversationKey=null}={}){
     return this.store.db.transaction(async q=>{
       const [incident]=await q('SELECT id,revision,analysis FROM sre_incidents WHERE id=?'+lock(this.store),[incidentId]);if(!incident)throw Error('Incident not found');
@@ -239,13 +276,15 @@ export class Casework {
       const revision=Number(incident.revision),fence=await this.store.restoreFence(q),[audit]=await q('SELECT MAX(revision) AS latest_revision,MAX(CASE WHEN revision=? AND body=? THEN 1 ELSE 0 END) AS matches FROM sre_assessments WHERE incident_id=?',[revision,incident.analysis,incidentId]),[count]=await q('SELECT COUNT(*) AS count FROM sre_fix_plans WHERE incident_id=?',[incidentId]);
       const total=Number(count.count),held=fence?.active===true,currentReview=Number(audit.matches)===1&&Number(audit.latest_revision)===revision;
       // Reserve current evidence before the historical window. Do not load
-      // Markdown, plan payloads, QA logs, credentials or approval nonces.
-      const rows=await q('SELECT p.id,p.revision,p.created_at,(SELECT COUNT(*) FROM sre_fix_requests r WHERE r.plan_id=p.id AND r.incident_id=p.incident_id) AS qa_count FROM sre_fix_plans p WHERE p.incident_id=? ORDER BY CASE WHEN p.revision=? THEN 0 ELSE 1 END,p.created_at DESC,p.id DESC LIMIT 3',[incidentId,revision]),plans=[],now=await this.store.coordinationNow(q);
+      // Markdown, full plan payloads, QA logs, credentials or approval nonces.
+      const savedAssessmentHash=this.store.db.dialect==='postgres'?"p.payload::jsonb->>'assessmentHash'":"json_extract(p.payload,'$.assessmentHash')";
+      const rows=await q('SELECT p.id,p.revision,p.created_at,'+savedAssessmentHash+' AS assessment_hash,(SELECT COUNT(*) FROM sre_fix_requests r WHERE r.plan_id=p.id AND r.incident_id=p.incident_id) AS qa_count FROM sre_fix_plans p WHERE p.incident_id=? ORDER BY CASE WHEN p.revision=? THEN 0 ELSE 1 END,p.created_at DESC,p.id DESC LIMIT 3',[incidentId,revision]),plans=[],now=await this.store.coordinationNow(q);
       const commit=this.store.db.dialect==='postgres'?"result::jsonb->>'commit'":"json_extract(result,'$.commit')";
       for(const row of rows){
         const latest=await q('SELECT id,status,created_at,expires_at,'+commit+' AS commit_sha FROM sre_fix_requests WHERE plan_id=? AND incident_id=? ORDER BY created_at DESC,id DESC LIMIT 2',[row.id,incidentId]),[qa,peer]=latest,qaAmbiguous=Boolean(peer&&Number(peer.created_at)===Number(qa.created_at));
         if(!/^plan_[a-f0-9]{24}$/.test(row.id)||!epoch(Number(row.revision))||!epoch(Number(row.created_at))||!epoch(Number(row.qa_count))||latest.some(record=>!/^fix_[a-f0-9]{24}$/.test(record.id)||!epoch(Number(record.created_at))||!epoch(Number(record.expires_at))||!['proposed','approved','running','passed','failed','unknown','superseded'].includes(record.status)))throw new StorageError(Error('Invalid saved ticket index metadata'));
-        plans.push({id:row.id,revision:Number(row.revision),createdAt:Number(row.created_at),current:!held&&currentReview&&Number(row.revision)===revision,qaCount:Number(row.qa_count),qaAmbiguous,qa:qa&&!qaAmbiguous?{id:qa.id,status:qa.status==='proposed'&&Number(qa.expires_at)<=now?'expired':qa.status,commit:sha(qa.commit_sha)?qa.commit_sha:null}:null});
+        const assessmentCurrent=row.assessment_hash?row.assessment_hash===assessmentHash(incident.analysis?JSON.parse(incident.analysis):null):null;
+        plans.push({id:row.id,revision:Number(row.revision),createdAt:Number(row.created_at),current:!held&&currentReview&&Number(row.revision)===revision&&assessmentCurrent!==false,assessmentCurrent,qaCount:Number(row.qa_count),qaAmbiguous,qa:qa&&!qaAmbiguous?{id:qa.id,status:qa.status==='proposed'&&Number(qa.expires_at)<=now?'expired':qa.status,commit:sha(qa.commit_sha)?qa.commit_sha:null}:null});
       }
       return {incidentId,currentRevision:revision,held,total,limited:total>plans.length,plans};
     });
@@ -257,12 +296,14 @@ export class Casework {
   async proposeFix(incidentId,planId,principal,conversationKey,requestId) {
     const context=await this.store.context(incidentId),service=this.service(context.incident.service_key);
     this.authorize(principal,service,conversationKey);await this.store.authorizeIncidentConversation(conversationKey,incidentId);
+    if(unverifiedLogFields(context))throw Error('Current log fields are contradictory or malformed; reconcile them before proposing automatic QA');
     if(!this.qaAdapter||!this.qaAdapter.localOnly)throw Error('Local QA execution is not configured. The Markdown plan remains available for review.');
     const plan=await this.getPlan(planId,incidentId);if(!plan.payload.patch)throw Error('This plan has no supported automatic patch');
     const nonce=randomBytes(18).toString('hex'),id='fix_'+hash([incidentId,requestId]).slice(0,24),now=await this.store.coordinationNow();
     return this.store.db.transaction(async q=>{
       const room=await this.store.authorizeIncidentConversation(conversationKey,incidentId,q);if(room.incident_id!==incidentId)throw Error('Join this incident before requesting local QA');
-      const [current]=await q('SELECT revision FROM sre_incidents WHERE id=?'+lock(this.store),[incidentId]);if(Number(current.revision)!==Number(plan.revision))throw Error('Fix plan is stale; draft a fresh one');
+      const [current]=await q('SELECT revision,analysis FROM sre_incidents WHERE id=?'+lock(this.store),[incidentId]);if(Number(current.revision)!==Number(plan.revision))throw Error('Fix plan is stale; draft a fresh one');
+      if(!planAssessmentCurrent(plan.payload,current.analysis?JSON.parse(current.analysis):null))throw Error('Fix plan assessment is stale; draft a fresh one');
       const [prior]=await q('SELECT * FROM sre_fix_requests WHERE id=?',[id]);if(prior){if(prior.plan_id!==planId||prior.conversation_key!==conversationKey||prior.requested_by!==principal.userId)throw Object.assign(Error('QA request identity was reused for a different plan, developer or conversation'),{status:409});return {id,status:prior.status,text:'QA request '+id+' already exists as '+prior.status+'. Request a new proposal if a new approval is needed.'};}
       if((await this.store.restoreFence(q))?.active)throw Error('QA is held during restore reconciliation');
       await q('INSERT INTO sre_fix_requests(id,plan_id,incident_id,conversation_key,requested_by,nonce_hash,expires_at,status,created_at) VALUES(?,?,?,?,?,?,?,\'proposed\',?)',[id,planId,incidentId,conversationKey,principal.userId,hash(nonce),now+600000,now]);
@@ -300,7 +341,8 @@ export class Casework {
       if(receipt){await assertQaCommandClaim(this.store,q,claim);return {id,status:row.status,duplicate:true,text:'This approval message was already recorded for '+id+'. Its current status is '+row.status+'. No duplicate run or approval of another request was queued.'};}
       if(row.status!=='proposed'){await recordQaApprovalReceipt(this.store,q,claim,row,{applied:false});await assertQaCommandClaim(this.store,q,claim);return {id,status:row.status,text:'QA request '+id+' is already '+row.status+'. No duplicate run was queued.'};}
       if(Number(row.expires_at)<=await this.store.coordinationNow(q))throw Error('QA approval expired; request a fresh proposal');
-      const [plan]=await q('SELECT revision FROM sre_fix_plans WHERE id=?',[row.plan_id]);if(Number(plan.revision)!==Number(incident.revision))throw Error('Fix plan is stale; draft a fresh one before approval');
+      const [plan]=await q('SELECT revision,payload FROM sre_fix_plans WHERE id=?',[row.plan_id]);if(Number(plan.revision)!==Number(incident.revision))throw Error('Fix plan is stale; draft a fresh one before approval');
+      if(!planAssessmentCurrent(JSON.parse(plan.payload),incident.analysis?JSON.parse(incident.analysis):null))throw Error('Fix plan assessment is stale; draft a fresh one before approval');
       const delivery=bareYes?await deliveredQaProposal(this.store,q,row,claim):null;
       await q("UPDATE sre_fix_requests SET status='approved',approved_by=? WHERE id=?",[principal.userId,id]);await this.event(q,id,'approved',{actor:principal.userId});
       await recordQaApprovalReceipt(this.store,q,claim,row,{applied:true,delivery});await assertQaCommandClaim(this.store,q,claim);
@@ -308,45 +350,59 @@ export class Casework {
     });
   }
   async runOnce() {
-    if(!this.qaAdapter?.localOnly)return false;
+    const adapter=this.qaAdapter;
+    if(!adapter?.localOnly||this.qaExecution.closed)return false;
+    const call=this.qaExecution.reserve();
+    try {
     const owner=randomBytes(18).toString('hex');
     const request=await this.store.db.transaction(async q=>{
       if((await this.store.restoreFence(q))?.active)return null;
       const now=await this.store.coordinationNow(q);
       const expired=await q("UPDATE sre_fix_requests SET status='unknown',error='Local QA worker was interrupted; inspect its workspace and audit before another request',lease_owner=NULL,lease_until=NULL WHERE status='running' AND lease_until<=? RETURNING id,incident_id,conversation_key",[now]);
       for(const row of expired){await this.event(q,row.id,'unknown',{reason:'Expired local QA lease; no automatic rerun'});await this.store.queueMessage(row.incident_id,'QA '+row.id+' · outcome unknown after an interrupted local run. Inspect the saved workspace and audit before another request. The action will not be replayed automatically.',null,'qa-unknown:'+row.id,q,{broadcast:true});}
+      if(!call)return null;
       const [row]=await q("SELECT * FROM sre_fix_requests WHERE status='approved' ORDER BY created_at LIMIT 1"+(this.store.db.dialect==='postgres'?' FOR UPDATE SKIP LOCKED':''));if(!row)return null;
       // A local filesystem action is never silently resumed after a crash. Its
       // durable running marker makes reconciliation explicit on the next start.
       await q("UPDATE sre_fix_requests SET status='running',lease_owner=?,lease_until=? WHERE id=?",[owner,now+120000,row.id]);await this.event(q,row.id,'running',{owner});return row;
     });if(!request)return false;
-    let result,error,status;
+    let result,error,status,reviewedAnalysisHash;
     try {
       const context=await this.store.context(request.incident_id),plan=await this.getPlan(request.plan_id,request.incident_id),service=this.service(context.incident.service_key);
       if(Number(context.incident.revision)!==Number(plan.revision)||!service.teams.approvers.includes(request.approved_by))throw Error('QA scope or approval changed before execution');
+      if(context.assessmentStatus?.state!=='current'||!planAssessmentCurrent(plan.payload,context.incident.analysis))throw Error('QA assessment changed before execution; draft a fresh plan');
+      reviewedAnalysisHash=hash(context.incident.analysis);
+      if(unverifiedLogFields(context))throw Error('Current log fields are contradictory or malformed; automatic QA cannot execute this saved patch');
       if(Number(request.expires_at)<=await this.store.coordinationNow())throw Error('QA approval expired before execution');
       const room=await this.store.authorizeIncidentConversation(request.conversation_key,request.incident_id);if(room.incident_id!==request.incident_id)throw Error('QA conversation no longer follows this incident');
-      result=redact(await this.qaAdapter.execute({requestId:request.id,plan:plan.payload,markdown:plan.markdown}));status=result.status==='passed'?'passed':'failed';
+      const outcome=await this.qaExecution.run(call,{requestId:request.id,plan:plan.payload,markdown:plan.markdown},adapter);
+      if(outcome.kind==='interrupted'){status='unknown';error=outcome.reason==='timeout'?'Local QA execution exceeded its host deadline; cancellation was requested but the workspace outcome may be uncertain. Inspect the workspace and audit before another request; this action will not be replayed automatically.':'The agent stopped while local QA was in progress; cancellation was requested. Inspect its workspace and audit before another request; this action will not be replayed automatically.';}
+      else if(outcome.kind==='error')throw outcome.error;
+      else {result=redact(outcome.result);status=result.status==='passed'?'passed':'failed';}
     }catch(cause){error=redact(cause.message);status='failed';}
     await this.store.db.transaction(async q=>{
-      const [incident]=await q('SELECT revision,service_key FROM sre_incidents WHERE id=?'+lock(this.store),[request.incident_id]);
-      const [plan]=await q('SELECT revision FROM sre_fix_plans WHERE id=?',[request.plan_id]);
+      const [incident]=await q('SELECT id,revision,service_key,analysis FROM sre_incidents WHERE id=?'+lock(this.store),[request.incident_id]);
+      const [plan]=await q('SELECT revision,payload FROM sre_fix_plans WHERE id=?',[request.plan_id]);
       const service=this.service(incident.service_key),reasons=[];
       if(Number(incident.revision)!==Number(plan.revision))reasons.push('Incident evidence changed during QA');
+      const review=await directoryContext(incident,q);
+      if(review.assessmentStatus.state!=='current'||!planAssessmentCurrent(JSON.parse(plan.payload),review.incident.analysis)||(reviewedAnalysisHash&&reviewedAnalysisHash!==hash(review.incident.analysis)))reasons.push('The incident assessment changed before or during QA');
       if(!service.teams.approvers.includes(request.approved_by))reasons.push('The approving developer no longer has QA authority');
       try{const room=await this.store.authorizeIncidentConversation(request.conversation_key,request.incident_id,q);if(room.incident_id!==request.incident_id)reasons.push('The requesting conversation no longer follows this incident');}
       catch(cause){if(cause instanceof StorageError)throw cause;reasons.push('The requesting conversation lost access to this incident');}
-      if(reasons.length){status='superseded';error=reasons.join('. ')+'. Retain these historical artifacts; request a fresh plan and approval before further work.';}
+      if(reasons.length){if(status!=='unknown')status='superseded';error=(error?error+' ':'')+reasons.join('. ')+'. Retain these historical artifacts; request a fresh plan and approval before further work.';}
       if(result)result={...result,review:{approvedRevision:Number(plan.revision),completedRevision:Number(incident.revision),current:!reasons.length,reason:error||null}};
       const updated=await q("UPDATE sre_fix_requests SET status=?,result=?,error=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_owner=? AND lease_until>? RETURNING id",[status,result?JSON.stringify(result):null,error||null,request.id,owner,await this.store.coordinationNow(q)]);
       if(!updated.length){await this.event(q,request.id,'late-result',{result:result||null,error:error||null});return;}
       await this.event(q,request.id,status,{result:result||null,error:error||null});
       await this.store.queueMessage(request.incident_id,'QA '+request.id+' · '+status+(result?'\nLocal branch: '+result.branch+'\nCommit: '+result.commit+'\n'+result.summary:'')+(error?'\n'+error:'')+'\nNo push, MR, deployment or verified production recovery.',null,'qa-result:'+request.id,q,{broadcast:true});
     });return true;
+    } finally {this.qaExecution.finish(call);}
   }
   async snapshot(incidentId,context){
     context||=await this.store.context(incidentId);const revision=Number(context.incident.revision),held=context.recoveryFence?.active===true;
     const contacts=await this.contacts(incidentId,context);
-    return {associationActionVersion:1,held,currentRevision:revision,contacts,assessmentContactsCurrent:contactsCurrent(context.incident.analysis?.contacts,contacts),plans:(await this.plans(incidentId)).map(plan=>({...plan,current:Number(plan.revision)===revision,contactsCurrent:contactsCurrent(plan.payload.contacts,contacts)})),changes:await this.timeline(incidentId,context),qa:(await this.store.db.query('SELECT r.id,r.plan_id,r.status,r.approved_by,r.created_at,r.result,r.error,p.revision AS plan_revision FROM sre_fix_requests r JOIN sre_fix_plans p ON p.id=r.plan_id WHERE r.incident_id=? ORDER BY r.created_at DESC LIMIT 20',[incidentId])).map(r=>({...r,current:!held&&Number(r.plan_revision)===revision&&!['superseded','unknown'].includes(r.status),result:r.result?JSON.parse(r.result):null}))};
+    const {items:qa,...qaHistory}=await this.qaRequests(incidentId,{attention:true});
+    return {associationActionVersion:1,held,currentRevision:revision,contacts,assessmentContactsCurrent:contactsCurrent(context.incident.analysis?.contacts,contacts),plans:(await this.plans(incidentId)).map(plan=>({...plan,current:Number(plan.revision)===revision,assessmentCurrent:context.assessmentStatus?.state==='current'&&planAssessmentCurrent(plan.payload,context.incident.analysis),contactsCurrent:contactsCurrent(plan.payload.contacts,contacts)})),changes:await this.timeline(incidentId,context),qa,qaHistory};
   }
 }

@@ -9,6 +9,9 @@ An SRE investigation and incident-collaboration prototype with a persistent Node
 **For a coding agent:** read [AGENTS.md](AGENTS.md). Claude Code also has [CLAUDE.md](CLAUDE.md). Use the [implementation brief](docs/ALLY-AGENT-PROMPT.md) to adapt the project in an approved Ally environment.
 
 Requires Node.js 24+, Git, pnpm 11.25.0 and an installed/authenticated Claude CLI. The normal development command runs the actual model:
+**For current work planning:** the [single Jira ticket packet](docs/JIRA-TICKETS.md) contains the complete current implementation ticket, future-work ticket, review/open decisions, and Claude instructions for distinguishing issues from tasks and questions. Use its current scope rather than older roadmap defaults.
+
+Requires Node.js 24+, Git, and pnpm 11.25.0. Start the persistent integration console with:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -216,3 +219,9 @@ The original `src/core/` and SQS-shaped adapter remain an isolated auction teach
 - [Original architecture review](docs/PLAN-REVIEW.md)
 
 Requires Node.js 24+, Git, and pnpm. `.env.example` lists configuration names; secrets stay in ignored local files or the deployment secret store. Source-level redaction removes common credential patterns but is not a comprehensive PII scrubber. Set service-specific retention and upstream log filtering before using real business data.
+
+For an offline investigation that starts without a known runtime repository, run `pnpm sre:discovery:demo` and open [the candidate-source demo](http://127.0.0.1:3007). It uses a separate database, real generated local Git history, two fictional Teams groups and rules mode. [Candidate discovery](docs/SOURCE-DISCOVERY.md) preserves competing repositories and keeps deployment/cause unverified. Claude and live execution remain off.
+
+`pnpm sre:history:demo` opens the separate [candidate-history rehearsal](http://127.0.0.1:3008). It adds provider-reported last-modifying and exact parent source to the rules/mock flow, preserving competing repositories and unknown runtime mapping. [History limits and provenance](docs/SOURCE-HISTORY.md) explain what the before/after evidence can establish.
+
+The [directory-to-source rehearsal](docs/SOURCE-INVENTORY.md) adds bounded follow-up navigation before exact file reads. Run `pnpm sre:inventory:demo` for the separate port-3009 demo. A deterministic fixture planner exercises the real host read policy and SQL persistence; it is not Claude or diagnostic-quality acceptance. Existing history/discovery demos keep their own databases and defaults.

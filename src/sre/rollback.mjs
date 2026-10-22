@@ -29,9 +29,12 @@ export function assessRollback(context,service,now=Date.now()) {
   if(current && (now-current.at>maxAge || current.at>context.incident.started_at || context.incident.started_at-current.at>maxAge))reasons.push('The deployed change is too old or happened after the incident began. Reverting long-lived feature history is not an eligible rollback.');
   if(current && analysis.candidateSha!==current.sha)reasons.push('The suspected commit is not the currently recorded deployment.');
   if(current)reasons.push(...deploymentBlockers(context.deployments,current));
-  const target=all.find(x=>x.provider===policy.provider && x.sha!==current?.sha && x.at<current?.at && x.healthy===true && Number.isFinite(x.healthVerifiedAt) && x.healthVerifiedAt>=x.at && x.healthVerifiedAt<=context.incident.started_at && now-x.healthVerifiedAt<=maxTargetAge && now-x.at<=maxTargetAge);
+  const target=all.find(x=>x.provider===policy.provider && x.sha!==current?.sha && x.at<current?.at && x.healthy===true && Number.isSafeInteger(x.healthVerifiedAt) && x.healthVerifiedAt>=x.at && x.healthVerifiedAt<=context.incident.started_at && now-x.healthVerifiedAt<=maxTargetAge && now-x.at<=maxTargetAge);
   if(!target)reasons.push('No recent, independently verified healthy artifact is available.');
   if(target?.identityConflict)reasons.push('The target deployment has conflicting SHA or artifact metadata.');
+  if(target?.statusConflict)reasons.push('The target deployment has conflicting status observations at the same source time.');
+  if(target?.attestationConflicts?.length)reasons.push('The target deployment has conflicting attestations for: '+target.attestationConflicts.map(item=>item.field).join(', ')+'.');
+  if(target?.historyIncomplete)reasons.push('The target deployment history is incomplete or its identity/scope is unverified.');
   for(const [name,release] of [['current',current],['target',target]]) {
     if(release&&(!Number.isSafeInteger(release.at)||release.at<0))reasons.push('The '+name+' deployment lacks a valid epoch-millisecond timestamp.');
     if(release && !/^(?:[A-Za-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$/.test(release.artifact||''))reasons.push('The '+name+' release lacks an immutable artifact digest.');
@@ -40,7 +43,8 @@ export function assessRollback(context,service,now=Date.now()) {
   if(current && (current.rollbackCompatible!==true || current.dataRollbackSafe!==true))reasons.push('Backward compatibility and data safety have not both been verified.');
   if(current&&target) {
     for(const field of ['schemaVersion','dependencyFingerprint','configurationFingerprint','featureFlagsFingerprint']) {
-      if(current[field]===undefined || target[field]===undefined || current[field]!==target[field])reasons.push(field+' is missing or differs between releases.');
+      const known=value=>typeof value==='string'&&value.trim().length>0||field==='schemaVersion'&&Number.isSafeInteger(value)&&value>=0;
+      if(!known(current[field]) || !known(target[field]) || current[field]!==target[field])reasons.push(field+' is missing, invalid or differs between releases.');
     }
   }
   const runtimeEvidence=context.evidence.filter(x=>x.kind==='problem' && !x.content?.reviewOnly && x.source!=='github' && x.source!=='gitlab');

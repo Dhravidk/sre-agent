@@ -27,12 +27,12 @@ export function assessReadiness(config,env={}) {
   for(const service of (Array.isArray(config.services)?config.services:[]).filter(item=>item&&typeof item==='object'&&!Array.isArray(item))) {
     for(const source of ['dynatrace','dynatraceLogs','servicenow','github','gitlab','jira']) {
       const c=service[source]||{},missing=[];
-      const fields={dynatrace:['base','entityId'],dynatraceLogs:['base','logField','logValue'],servicenow:['base','cmdbCi'],github:['repository'],gitlab:['base','project'],jira:['base','projects']}[source];
+      const fields={dynatrace:['base','entityId'],dynatraceLogs:['base','logField','logValue'],servicenow:['base','cmdbCi'],github:['repository'],gitlab:c.discovery?.enabled===true&&!c.project?['base','discovery']:['base','project'],jira:['base','projects']}[source];
       for(const field of fields)if(placeholder(Array.isArray(c[field])?c[field].join(','):c[field]))missing.push(source+'.'+field);
       if(source==='servicenow'&&c.transport==='mcp'&&placeholder(c.mcp?.endpoint))missing.push('servicenow.mcp.endpoint');
       if(source==='dynatrace'&&c.mode==='grail')for(const field of ['problemQuery','openProblemQuery'])if(placeholder(c[field]))missing.push(source+'.'+field);
       const credentialMode=authentication(c,source,missing,{basic:source==='jira'&&c.auth!=='bearer'});
-      if(source!=='dynatraceLogs'&&!(source==='servicenow'&&c.transport==='mcp'))secret(c.webhookSecretEnv,missing);
+      if(source!=='dynatraceLogs'&&!(source==='gitlab'&&c.discovery?.enabled===true&&!c.project)&&!(source==='servicenow'&&c.transport==='mcp'))secret(c.webhookSecretEnv,missing);
       checks.push({service:service.key,source,enabled:c.enabled===true,credentialMode,...(source==='servicenow'?{transport:c.transport||'rest'}:{}),configurationReady:missing.length===0,missing,liveValidated:false});
     }
     const rollback=service.rollback||{},writeMissing=[];

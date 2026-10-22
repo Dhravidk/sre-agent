@@ -5,6 +5,22 @@ import { createSreRuntime } from '../src/sre/server.mjs';
 import { loadConfig } from '../src/sre/config.mjs';
 import { RulesReasoner } from '../src/sre/reasoner.mjs';
 import { devActivity } from '../src/sre/demo.mjs';
+import {StorageError} from '../src/sre/database.mjs';
+
+test('shutdown cleanup closes provider clients and storage even when releasing its worker lease fails',async()=>{
+ const config=loadConfig({SRE_SQLITE_PATH:':memory:'}),failure=new StorageError(Error('Controlled unavailable lease storage'));let clientsClosed=0,storageClosed=0;
+ const client={close:async()=>{clientsClosed++;}},runtime=await createSreRuntime({config,autoStart:false,connectors:new Map([[config.services[0].key,{github:client,gitlab:client}]])}),closeDb=runtime.store.db.close.bind(runtime.store.db);runtime.store.release=async()=>{throw failure;};runtime.store.db.close=async()=>{storageClosed++;await closeDb();};
+ try{const closing=runtime.close();assert.equal(runtime.close(),closing);await assert.rejects(closing,error=>error===failure);assert.equal(clientsClosed,1);assert.equal(storageClosed,1);assert.equal(await runtime.actions(),false);}finally{if(!storageClosed)await closeDb();}
+});
+test('shutdown cleanup retains multiple failures while still closing every remaining resource once',async()=>{
+ const config=loadConfig({SRE_SQLITE_PATH:':memory:'}),lease=new StorageError(Error('Controlled lease failure')),provider=Error('Controlled provider close failure');let first=0,second=0,storage=0;
+ const runtime=await createSreRuntime({config,autoStart:false,connectors:new Map([[config.services[0].key,{github:{close:async()=>{first++;throw provider;}},gitlab:{close:async()=>{second++;}}}]])}),closeDb=runtime.store.db.close.bind(runtime.store.db);runtime.store.release=async()=>{throw lease;};runtime.store.db.close=async()=>{storage++;await closeDb();};
+ try{await assert.rejects(runtime.close(),error=>error instanceof AggregateError&&error.errors.includes(lease)&&error.errors.includes(provider));assert.equal(first,1);assert.equal(second,1);assert.equal(storage,1);}finally{if(!storage)await closeDb();}
+});
+test('shutdown cleanup drains a live investigation despite another close failure before closing storage',async()=>{
+ let entered,release,storageClosed=false;const started=new Promise(resolve=>entered=resolve),held=new Promise(resolve=>release=resolve),rules=new RulesReasoner(),failure=Error('Controlled transport close failure');const runtime=await createSreRuntime({config:loadConfig({SRE_SQLITE_PATH:':memory:'}),autoStart:false,reasoner:{investigate:async(...args)=>{entered();await held;return rules.investigate(...args);}}}),closeDb=runtime.store.db.close.bind(runtime.store.db);runtime.store.db.close=async()=>{storageClosed=true;await closeDb();};
+ try{await runtime.store.ingest({id:'cleanup-drain-incident',source:'dynatrace',serviceKey:'auction-local',kind:'problem',issueKey:'cleanup-drain',status:'OPEN',at:Date.now(),payload:{}});const reading=runtime.investigate();await started;runtime.outbox.close=async()=>{throw failure;};const closing=runtime.close(),observed=closing.then(()=>null,error=>error);await setImmediate();assert.equal(storageClosed,false);assert.equal(runtime.casework.qaExecution.closed,true);release();await reading;assert.equal(await observed,failure);assert.equal(storageClosed,true);}finally{release();if(!storageClosed){await runtime.close().catch(()=>{});if(!storageClosed)await closeDb();}}
+});
 
 test('shutdown waits for the original investigation despite repeated scheduler ticks',async()=>{
   let unblock,entered,closed=false;

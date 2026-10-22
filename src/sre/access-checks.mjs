@@ -1,3 +1,4 @@
+import {discoveryConfiguration} from './source-discovery-config.mjs';
 import { createConnectors } from './connectors.mjs';
 import { normalize } from './normalize.mjs';
 import { metricWindow } from './monitors.mjs';
@@ -55,6 +56,10 @@ export async function checkReadAccess(config,{env=config.env||{},connectorFactor
     }
     for(const provider of ['github','gitlab']) {
       const client=clients[provider],settings=service[provider];if(!client)continue;
+      if(provider==='gitlab'&&discoveryConfiguration(service)){
+        for(const project of discoveryConfiguration(service).projects)await run(provider,'discovery-project-metadata:'+project,async({signal})=>{const value=await client.discoveryMetadata(project,{signal});shape(value?.project===project);return{records:1};});
+        if(!settings.project){add(provider,'runtime-project-mapping','unverified','mapping-unverified','Approved discovery projects do not establish the runtime repository. Deployment, review and fixed-source probes need a verified fixed mapping.');continue;}
+      }
       let deployments=[],review;
       await run(provider,'repository-metadata',async({signal})=>{
         const data=await client.request(provider==='github'?client.repo:client.project,{signal});

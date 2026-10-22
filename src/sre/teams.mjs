@@ -12,9 +12,12 @@ import {teamsMessage} from './teams-format.mjs';
 import {signalDigestText} from './signal-digest.mjs';
 import {contactsText,ticketIndexText} from './casework.mjs';
 import {assessmentBrief} from './assessment-brief.mjs';
+import {simulationTeamsIdentity} from './teams-requests.mjs';
+import {qaHistoryText,qaRequestText} from './qa-history.mjs';
+import {cancelAlertReply} from './alert-replies.mjs';
 
 export {rootConversation};
-const help='Use: incidents; join <incident-id>; name <room name>; leave; update <responder update>; report <investigating|mitigating|monitoring|recovered|blocked> <details>; theory <key> <proposed|supported|ruled-out> <details>; work <shared-key> <planned|active|blocked|done|cancelled|released> <scope and next check>; sync; brief; signals; contacts; changes; track-change <github|gitlab> <change-number>; untrack-change <provider> <number> <link-reference> <reason>; retrack-change <provider> <number> <withdrawal-reference> <reason>; plan; tickets; ticket <plan-id>; fix <plan-id>; approve-fix <request-id> <nonce>; ack <briefing-number>; status; investigate <incident-id> <question>; retry <incident-id> <job-id> <reason>; rollback <incident-id>; approve <proposal-id> <nonce>. In a channel or group chat, @mention me to instruct me. Use a separate thread/chat for each incident.';
+const help='Use: incidents; join <incident-id>; name <room name>; leave; update <responder update>; report <investigating|mitigating|monitoring|recovered|blocked> <details>; theory <key> <proposed|supported|ruled-out> <details>; work <shared-key> <planned|active|blocked|done|cancelled|released> <scope and next check>; sync; brief; signals; contacts; changes; track-change <github|gitlab> <change-number>; untrack-change <provider> <number> <link-reference> <reason>; retrack-change <provider> <number> <withdrawal-reference> <reason>; plan; tickets; ticket <plan-id>; qa; qa <request-id>; fix <plan-id>; approve-fix <request-id> <nonce>; ack <briefing-number>; status; investigate <incident-id> <question>; retry <incident-id> <job-id> <reason>; rollback <incident-id>; approve <proposal-id> <nonce>. In a channel or group chat, @mention me to instruct me. Use a separate thread/chat for each incident.';
 
 // Channel replies can arrive with either a threaded conversation ID or replyToId.
 export function incidentConversation(activity) {
@@ -56,7 +59,7 @@ export class TeamsRouter {
       if(priors.some(prior=>prior.id===id||prior.at>at||(prior.at===at&&(!prior.enabled||enabled))))return {ignored:true};
       const all=await q('SELECT * FROM sre_conversations WHERE tenant_id=? AND service_key=? ORDER BY incident_id,id',[tenant,service.key]);
       const rooms=all.filter(room=>rootConversation(room.conversation_id)===root||teamId&&JSON.parse(room.reference).sreTeamId===teamId);
-      if(!enabled)for(const room of rooms)await q('UPDATE sre_conversations SET enabled=0 WHERE id=?',[room.id]);
+      if(!enabled)for(const room of rooms){await q('UPDATE sre_conversations SET enabled=0 WHERE id=?',[room.id]);if(room.incident_id)await cancelAlertReply(q,room.incident_id,room.id,now,'Conversation installation was removed');}
       else {
         await this.store.rememberConversation({tenant,reference:{...reference,...(teamId?{sreTeamId:teamId}:{}),conversation:{...reference.conversation,id:root}},serviceKey:service.key},q);
         for(const room of rooms.filter(room=>Number(room.enabled)===0)) {
@@ -76,7 +79,22 @@ export class TeamsRouter {
       return {enabled};
     });
   }
-  async accept(activity,reference,{getMember}={}) {
+  accept(activity,reference,options={}) {return this.#accept(activity,reference,options);}
+  simulationRequest(activity,{requestId,expectedIncidentId}={}) {
+    if(this.mode!=='playground')throw Object.assign(new Error('Simulator request IDs are unavailable to native Teams intake'),{status:403});
+    const service=this.serviceFor(activity),baseConversationId=activity.conversation.conversationType==='channel'&&activity.replyToId?incidentConversation(activity).id:activity.conversation.id;
+    const scope={serviceKey:service.key,tenant:service.teams.tenantId,baseConversationId,conversationType:activity.conversation.conversationType,userId:activity.from?.aadObjectId||''},identity=simulationTeamsIdentity(scope,requestId),conversationId=incidentConversation({...activity,id:identity.activityId}).id;
+    const request={text:String(activity.text||''),addressed:isAddressed(activity),displayName:String(activity.from?.name||'Responder'),expectedIncidentId:expectedIncidentId??null};
+    return {scope,request,requestId,conversationId};
+  }
+  async acceptSimulation(activity,reference,options={}) {
+    return this.store.acceptSimulationRequest(this.simulationRequest(activity,options),({query,requestedAt,activityId,ingest})=>this.#accept({...activity,id:activityId,timestamp:new Date(requestedAt).toISOString()},reference,{expectedIncidentId:options.expectedIncidentId,query,ingest}));
+  }
+  async simulationRequestStatus(activity,options={}) {
+    return this.store.simulationRequestStatus(this.simulationRequest(activity,options));
+  }
+  async #accept(activity,reference,{getMember,includeRestoreReceipt=false,expectedIncidentId,query:transactionQuery,ingest}={}) {
+    const query=transactionQuery||this.store.db.query;
     if(activity.from?.role==='bot'||activity.from?.id===activity.recipient?.id)return {ignored:true};
     const addressed=isAddressed(activity);
     // RSC delivers a whole team's channels; discard unconfigured background traffic.
@@ -89,12 +107,12 @@ export class TeamsRouter {
     }
     const conversation=incidentConversation(activity);
     const key=conversationKey(service.teams.tenantId,conversation.id);
-    const [saved]=await this.store.db.query('SELECT * FROM sre_conversations WHERE id=?',[key]);
+    const [saved]=await query('SELECT * FROM sre_conversations WHERE id=?',[key]);
     if(saved&&Number(saved.enabled)!==1)return {ignored:true,reason:'Conversation installation was removed; a new install event is required'};
     if(!addressed) {
       if(!service.teams.captureResponderUpdates||!saved?.incident_id)return {ignored:true};
-      const context=await this.store.context(saved.incident_id);
-      if(context.incident.status==='resolved')return {ignored:true};
+      if(transactionQuery){const [incident]=await query('SELECT service_key,status FROM sre_incidents WHERE id=?',[saved.incident_id]);if(!incident||incident.service_key!==service.key)throw new StorageError(Error('Saved Teams incident scope is inconsistent'));if(incident.status==='resolved')return {ignored:true};}
+      else{const context=await this.store.context(saved.incident_id);if(context.incident.status==='resolved')return {ignored:true};}
     }
     const principal={verified:true,simulation:this.mode==='playground',tenant:service.teams.tenantId,conversationId:conversation.id,rootConversationId:rootConversation(conversation.id),userId:activity.from?.aadObjectId||''};
     let text=String(activity.text||'');
@@ -108,7 +126,14 @@ export class TeamsRouter {
     if(!text||text.length>4000)throw new Error('Teams message must contain 1–4000 characters');
     if(typeof activity.id!=='string'||!activity.id)throw new Error('Teams activity ID is required');
     const teamId=activityTeamId(activity),tenant=service.teams.tenantId;
-    const remembered=await this.store.db.transaction(async q=>{
+    const deliveryId=key+':'+activity.id;
+    const [prior]=await query("SELECT payload FROM sre_events WHERE source='teams' AND service_key=? AND external_id=?",[service.key,deliveryId]);
+    const incidentId=prior?JSON.parse(prior.payload).payload.incidentId:saved?.incident_id||null;
+    // Console intent can only narrow the captured binding, never supply one.
+    // Recheck after its preflight read; a concurrent group switch must not
+    // attach selected-incident text to a different investigation.
+    if(expectedIncidentId!==undefined&&incidentId&&incidentId!==expectedIncidentId)throw Object.assign(new Error('This conversation follows '+incidentId+'. Select that incident or use a separate thread/chat before sending this message.'),{status:409});
+    const remember=async q=>{
       const keys=[...(teamId?['team:'+teamId]:[]),rootConversation(conversation.id)].map(root=>'teams-installation:'+conversationKey(tenant,root));
       for(const installationKey of keys) {
         await q("INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,'{}',?) ON CONFLICT DO NOTHING",[installationKey,await this.store.coordinationNow(q)]);
@@ -118,13 +143,15 @@ export class TeamsRouter {
       const [current]=await q('SELECT enabled FROM sre_conversations WHERE id=?',[key]);if(current&&Number(current.enabled)!==1)return false;
       const roomName=activity.conversation?.name||activity.channelData?.channel?.name||activity.channelData?.team?.name;
       await this.store.rememberConversation({tenant,reference:{...reference,conversation,...(teamId?{sreTeamId:teamId}:{}),...(roomName?{sreRoomName:String(roomName).slice(0,80)}:{})},serviceKey:service.key},q);return true;
-    });
+    };
+    const remembered=transactionQuery?await remember(transactionQuery):await this.store.db.transaction(remember);
     if(!remembered)return {ignored:true,reason:'Conversation installation was removed; a new install event is required'};
-    const deliveryId=key+':'+activity.id;
-    const [prior]=await this.store.db.query("SELECT payload FROM sre_events WHERE source='teams' AND service_key=? AND external_id=?",[service.key,deliveryId]);
-    const incidentId=prior?JSON.parse(prior.payload).payload.incidentId:saved?.incident_id||null;
     // Bind context at receipt, so a delayed message cannot move to a different issue.
-    return this.store.ingest({id:deliveryId,source:'teams',serviceKey:service.key,kind:'teams',at:Date.parse(activity.timestamp),payload:{text,principal,addressed,incidentId,displayName:String(activity.from?.name||'Responder').slice(0,200),conversationKey:key,serviceKey:service.key,at:Date.parse(activity.timestamp),...(unreadAttachments.length?{unreadAttachments}:{})}});
+    const event={id:deliveryId,source:'teams',serviceKey:service.key,kind:'teams',at:Date.parse(activity.timestamp),payload:{text,principal,addressed,incidentId,displayName:String(activity.from?.name||'Responder').slice(0,200),conversationKey:key,serviceKey:service.key,at:Date.parse(activity.timestamp),...(unreadAttachments.length?{unreadAttachments}:{})}};
+    const receipt=ingest?await ingest(event):await this.store.ingest(event,{includeRestoreReceipt});
+    // The outer ingestion incidentId is null for a Teams command. Describe its
+    // pinned payload binding separately; intake is not processing or approval.
+    return {...receipt,commandReceipt:{version:1,id:receipt.eventId,incidentId,conversationId:conversation.id}};
   }
   async processOnce() {
     const command=await this.store.db.transaction(async(q)=>{
@@ -219,10 +246,11 @@ export class TeamsRouter {
         } else if(verb.toLowerCase()==='signals') {
           const context=await this.store.context(incidentId);
           response=signalDigestText(context.signalDigest);
-        } else if(['contacts','changes','track-change','untrack-change','retrack-change','plan','ticket','tickets','fix','approve-fix','yes'].includes(verb.toLowerCase())&&this.casework) {
+        } else if(['contacts','changes','track-change','untrack-change','retrack-change','plan','ticket','tickets','qa','fix','approve-fix','yes'].includes(verb.toLowerCase())&&this.casework) {
           const action=verb.toLowerCase();
           if(action==='contacts'){responseContacts=await this.casework.contacts(incidentId);response=contactsText(responseContacts);}
           if(action==='tickets'){if(id)throw Error('Use tickets alone in the joined incident conversation');response=ticketIndexText(await this.casework.ticketIndex(incidentId,{conversationKey:message.conversationKey}));}
+          if(action==='qa'){if(rest.length)throw Error('Use qa alone or qa <request-id> in the joined incident conversation');response=id?qaRequestText(await this.casework.qaRequest(incidentId,id)):qaHistoryText(await this.casework.qaRequests(incidentId,{attention:true}));}
           if(action==='changes'){const view=await this.casework.timeline(incidentId);response='Tracked change history for '+incidentId+'\n'+view.links.slice(0,12).map(l=>'Linked '+l.provider+' #'+l.change_number+(l.association?' by '+(l.association.label||l.association.id):' through provider/reader evidence')+(l.historicalAfterRestore?' · historical after restore; fresh reaffirmation needed':'')+' · link reference '+l.evidence_id+'.').join('\n')+'\n'+view.withdrawals.slice(0,4).map(c=>'Withdrawn '+c.provider+' #'+c.number+' by '+c.actor.label+': '+c.reason.slice(0,240)+' · reconsider reference '+c.evidenceId+'.').join('\n')+'\n'+changeTimelineText(view,{limit:8})+'\n'+view.interpretation+(view.limited?'\nHistory window is limited.':'');}
           if(action==='track-change'){if(rest.length!==1)throw Error('Use track-change <github|gitlab> <change number>');const linked=await this.casework.trackChange(incidentId,id,rest[0],{kind:'teams',principal:message.principal,displayName:message.displayName,conversationKey:message.conversationKey});response=(linked.duplicate?'Already tracking ':'Tracking ')+linked.provider+' #'+linked.number+' for '+incidentId+' at observed head '+linked.headSha+'. Future observed updates follow this incident. This association is context, not cause, QA approval or verified recovery.';}
           if(['untrack-change','retrack-change'].includes(action)){
@@ -263,7 +291,7 @@ export class TeamsRouter {
           await record('question',incidentId,text.toLowerCase()==='status'?'Summarize the current incident, responder actions and reported results, conflicting evidence, and next checks.':text);
           response='Your request is queued for '+incidentId+'.';
         }
-      } else response=help;
+      } else response=text.toLowerCase()==='help'?help:'This message was not added to an incident investigation because this conversation had no incident link when it arrived. Send incidents to choose an incident, then join <incident-id> and wait for the linked confirmation before sending this update again. Earlier messages are not imported automatically.';
       responseIncidentId=conversation.incident_id===incidentId||verb.toLowerCase()==='join'?incidentId||null:null;
     } catch(error) {
       if(message.addressed===false||error instanceof StorageError)throw error; // Keep storage failures retryable through the durable command lease.

@@ -619,7 +619,7 @@ test('actual Teams SDK group-chat transport delivers the same coordination brief
   try {
     f.r.outbox.sender=bridge.sender;const id=await f.incident();
     for(const [room,text] of [['group-0','join '+id],['group-1','join '+id],['group-0','report recovered Alex sees healthy bids.'],['group-1','report blocked Sam still sees errors.']]) {
-      const sample=devActivity(text,f.c.services[0],{conversationType:'groupChat',conversationId:room,id:String(++f.sequence),serviceUrl});sample.activity.timestamp=new Date(f.now).toISOString();
+      const sample=devActivity(text,f.c.services[0],{conversationType:'groupChat',conversationId:room,id:String(++f.sequence),serviceUrl,userId:room==='group-0'?'alex':'sam',displayName:room==='group-0'?'Alex':'Sam'});sample.activity.timestamp=new Date(f.now).toISOString();
       const response=await fetch('http://127.0.0.1:'+bridge.server.address().port+'/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sample.activity)});assert.equal(response.status,200);await f.r.router.processOnce();
     }
     await f.r.coordination.runOnce();await f.drain();

@@ -124,3 +124,19 @@ test('HTTP no-change callback requires the independent HMAC and cannot turn a ch
     assert.equal((await f.runtime.store.snapshot()).rollbacks[0].status,'not_executed');assert.equal((await f.runtime.store.context(f.incidentId)).incident.status,'open');
   } finally{await f.runtime.close();}
 });
+
+for(const dialect of ['sqlite','postgres'])test(dialect+': replay-heavy no-change reconciliation cannot hide an earlier contradiction for the current native deployment',async()=>{
+ const f=await fixture(dialect),store=f.runtime.store;try{
+  const context=await store.context(f.incidentId),[current,target]=context.deployments,clean=row=>Object.fromEntries(Object.entries(row).filter(([key])=>!['recordId','source','at','identityConflict','historyIncomplete','historyRoles','statusConflict','latestStoredStatus','latestObservationAt'].includes(key))),add=(id,payload,at)=>store.ingest({id,source:payload.provider,kind:'deployment',serviceKey:f.service.key,at,payload});
+  await add('old-current-contradiction',{...clean(current),deploymentId:'native-current',sha:'c'.repeat(40),artifact:'sha256:'+'c'.repeat(64)},target.at-1000);await add('native-current-success',{...clean(current),deploymentId:'native-current'},current.at+1);for(let n=0;n<240;n++)await add('target-reread-'+n,{...clean(target),deploymentId:'native-target',transportNote:'Repeated fixture '+n},target.at+1);
+  const proof={...f.proof,deploymentId:'native-current',deploymentAt:current.at+1,observedAt:await store.coordinationNow()},before=await store.snapshot();await assert.rejects(()=>store.ingest(f.event(proof)),/settled current deployment ledger/);assert.equal((await store.db.query('SELECT status FROM sre_rollbacks WHERE id=?',[f.row.id]))[0].status,'dispatched');assert.equal((await store.snapshot()).outbox.length,before.outbox.length);assert.equal(Number((await store.db.query('SELECT COUNT(*) AS count FROM sre_events WHERE external_id=?',[proof.id]))[0].count),0);assert.equal(f.dispatches(),1,'Only the pre-existing fixture workflow stub was called; rejection cannot retry it');
+ }finally{await f.runtime.close();}
+});
+
+for(const dialect of ['sqlite','postgres'])test(dialect+': terminal no-change proof cannot reconcile a current deployment with same-time compatibility disagreement',async()=>{
+ const f=await fixture(dialect),store=f.runtime.store;try{
+  const current=assessRollback(await store.context(f.incidentId),f.service).current,clean=Object.fromEntries(Object.entries(current).filter(([key])=>!['recordId','source','at','historyRoles','historyIncomplete','identityConflict','statusConflict','attestationConflicts','latestStoredStatus','latestObservationAt'].includes(key))),ids=Array.from({length:20},(_,n)=>'no-change-metadata-'+n).sort((a,b)=>hash(['releases',f.service.key,a]).localeCompare(hash(['releases',f.service.key,b])));
+  for(const[id,payload]of [[ids.at(-1),{...clean,deploymentId:'current-metadata',configurationFingerprint:'different-config'}],[ids[0],{...clean,deploymentId:'current-metadata'}]])await store.ingest({id,source:'releases',serviceKey:f.service.key,kind:'deployment',at:current.at+1,payload});
+  const proof={...f.proof,deploymentId:'current-metadata',deploymentAt:current.at+1,observedAt:await store.coordinationNow()},before=await store.snapshot();await assert.rejects(()=>store.ingest(f.event(proof)),/settled current deployment ledger/);assert.equal((await store.db.query('SELECT status FROM sre_rollbacks WHERE id=?',[f.row.id]))[0].status,'dispatched');assert.equal((await store.snapshot()).outbox.length,before.outbox.length);assert.equal(Number((await store.db.query('SELECT COUNT(*) AS count FROM sre_events WHERE external_id=?',[proof.id]))[0].count),0);assert.equal(f.dispatches(),1,'Only the existing fixture stub was called; no automatic retry');
+ }finally{await f.runtime.close();}
+});

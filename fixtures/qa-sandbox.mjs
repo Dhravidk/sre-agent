@@ -22,9 +22,10 @@ test('catalog stays below the fixture latency budget',async()=>{const a=new Auct
 export function createPilotQaAdapter(directory) {
   const manifest=seedPilot(),base=resolve(directory);
   const environment={PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_TERMINAL_PROMPT:'0'};
-  const gitRaw=async(repo,...args)=>(await exec('/usr/bin/git',['-c','core.hooksPath=/dev/null','-C',repo,...args],{env:environment,encoding:'utf8',timeout:15000,maxBuffer:512*1024})).stdout;
-  const git=async(repo,...args)=>(await gitRaw(repo,...args)).trim();
-  return {localOnly:true,async execute({requestId,plan,markdown}) {
+  return {localOnly:true,async execute({requestId,plan,markdown,signal}) {
+    signal?.throwIfAborted();
+    const gitRaw=async(repo,...args)=>(await exec('/usr/bin/git',['-c','core.hooksPath=/dev/null','-C',repo,...args],{env:environment,encoding:'utf8',timeout:15000,maxBuffer:512*1024,signal})).stdout;
+    const git=async(repo,...args)=>(await gitRaw(repo,...args)).trim();
     if(!/^fix_[a-f0-9]{24}$/.test(requestId)||plan.patch?.path!=='src/auction/rules.mjs')throw Error('Unsupported local QA request');
     const entry=Object.entries(manifest.releases).find(([,r])=>r.sha===plan.patch.headSha);
     if(!entry||plan.patch.baseSha!==manifest.baseline)throw Error('QA accepts only an exact generated pilot revision');
@@ -38,12 +39,12 @@ export function createPilotQaAdapter(directory) {
     const workspace=resolve(base,requestId);await mkdir(base,{recursive:true,mode:0o700});await mkdir(workspace,{mode:0o700});
     // Copy immutable trusted bytes; do not inherit a remote URL, hooks, local
     // config, credentials, dependencies or arbitrary repository test commands.
-    for(const [path,bytes]of Object.entries(files)){await mkdir(dirname(resolve(workspace,path)),{recursive:true});await writeFile(resolve(workspace,path),bytes);}
+    for(const [path,bytes]of Object.entries(files)){await mkdir(dirname(resolve(workspace,path)),{recursive:true});await writeFile(resolve(workspace,path),bytes,{signal});}
     await git(workspace,'init','-b','codex/qa-'+requestId.slice(4));
     const branch=await git(workspace,'branch','--show-current');
-    await mkdir(resolve(workspace,'tests'),{recursive:true});await writeFile(resolve(workspace,'tests/qa-invariants.test.mjs'),testSource);
+    await mkdir(resolve(workspace,'tests'),{recursive:true});await writeFile(resolve(workspace,'tests/qa-invariants.test.mjs'),testSource,{signal});
     await git(workspace,'add','.');await git(workspace,'-c','user.name=Fictional QA Agent','-c','user.email=qa@example.invalid','commit','-m','Import exact trusted drill source '+plan.patch.headSha);
-    const run=async()=>{try{const r=await exec(process.execPath,['--test','tests/qa-invariants.test.mjs'],{cwd:workspace,env:environment,encoding:'utf8',timeout:30000,maxBuffer:256*1024});return {exitCode:0,output:r.stdout+r.stderr};}catch(e){if(typeof e.code!=='number')throw e;return {exitCode:e.code,output:(e.stdout||'')+(e.stderr||'')};}};
+    const run=async()=>{try{const r=await exec(process.execPath,['--test','tests/qa-invariants.test.mjs'],{cwd:workspace,env:environment,encoding:'utf8',timeout:30000,maxBuffer:256*1024,signal});return {exitCode:0,output:r.stdout+r.stderr};}catch(e){if(typeof e.code!=='number')throw e;return {exitCode:e.code,output:(e.stdout||'')+(e.stderr||'')};}};
     const reproduction=await run();if(reproduction.exitCode===0)throw Error('Expected business defect did not reproduce');
     const ast=parse(source,{ecmaVersion:'latest',sourceType:'module'}),declaration=ast.body.find(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.declarations?.some(d=>d.id.name==='policy')).declaration.declarations.find(d=>d.id.name==='policy');
     const property=declaration.init.properties.filter(p=>(p.key.name||p.key.value)===plan.patch.field).at(-1);
@@ -51,11 +52,11 @@ export function createPilotQaAdapter(directory) {
     const patched=source.slice(0,property.value.start)+JSON.stringify(plan.patch.value)+source.slice(property.value.end);
     const after=reviewPolicySources({path:plan.patch.path,complete:true,base:pilotFiles()['src/auction/rules.mjs'].toString(),head:patched});
     if(!after.supported||after.findings.length)throw Error('Proposed correction leaves a known policy regression');
-    await writeFile(resolve(workspace,plan.patch.path),patched);
+    await writeFile(resolve(workspace,plan.patch.path),patched,{signal});
     const validation=await run();
-    await mkdir(resolve(workspace,'docs'),{recursive:true});await writeFile(resolve(workspace,'docs/fix-plan.md'),markdown);
-    await writeFile(resolve(workspace,'docs/merge-request.md'),'# Draft: correct '+plan.patch.signal+'\n\nIncident: '+plan.incidentId+'\nSource SHA: '+plan.patch.headSha+'\n\nRestore the known policy field '+plan.patch.field+' to '+JSON.stringify(plan.patch.value)+'. The faulty revision failed the local business checks; the proposed revision '+(validation.exitCode===0?'passes all four checks.':'still fails checks and is not ready for review.')+'\n\nReview docs/fix-plan.md and docs/qa-result.json. This is a local MR draft; nothing has been pushed, merged or deployed.\n');
-    await writeFile(resolve(workspace,'docs/qa-result.json'),JSON.stringify({requestId,sourceSha:plan.patch.headSha,reproduction,validation},null,2)+'\n');
+    await mkdir(resolve(workspace,'docs'),{recursive:true});await writeFile(resolve(workspace,'docs/fix-plan.md'),markdown,{signal});
+    await writeFile(resolve(workspace,'docs/merge-request.md'),'# Draft: correct '+plan.patch.signal+'\n\nIncident: '+plan.incidentId+'\nSource SHA: '+plan.patch.headSha+'\n\nRestore the known policy field '+plan.patch.field+' to '+JSON.stringify(plan.patch.value)+'. The faulty revision failed the local business checks; the proposed revision '+(validation.exitCode===0?'passes all four checks.':'still fails checks and is not ready for review.')+'\n\nReview docs/fix-plan.md and docs/qa-result.json. This is a local MR draft; nothing has been pushed, merged or deployed.\n',{signal});
+    await writeFile(resolve(workspace,'docs/qa-result.json'),JSON.stringify({requestId,sourceSha:plan.patch.headSha,reproduction,validation},null,2)+'\n',{signal});
     await git(workspace,'add','.');await git(workspace,'-c','user.name=Fictional QA Agent','-c','user.email=qa@example.invalid','commit','-m','Propose reviewed policy correction for '+plan.incidentId);
     const commit=await git(workspace,'rev-parse','HEAD');
     const patch=await gitRaw(workspace,'diff','HEAD^','HEAD','--',plan.patch.path);
