@@ -3,6 +3,7 @@ import {workHandoffs,handoffText} from './work-handoffs.mjs';
 import {teamsRoot,teamsConversationAllowed,tenantAdmission} from './teams-access.mjs';
 import {queueAttentionChecks} from './coordination-attention.mjs';
 
+export const incidentConversationLimit=teams=>teams?.maxIncidentConversations??8;
 export const rootConversation=teamsRoot;
 export const reportedStates=Object.freeze(['investigating','mitigating','monitoring','recovered','blocked']);
 export const workStates=Object.freeze(['planned','active','blocked','done','cancelled','released']);
@@ -23,6 +24,7 @@ const reconciliationCodes=new Set(['reported-state-disagreement','competing-theo
 const delivered=status=>['sent','simulated'].includes(status);
 
 export function validateCollaboration(teams) {
+  if(teams.maxIncidentConversations!==undefined&&(!Number.isInteger(teams.maxIncidentConversations)||teams.maxIncidentConversations<2||teams.maxIncidentConversations>32))throw Error('teams.maxIncidentConversations must be 2–32');
   const groups=teams.collaborationGroups||[];
   if(!Array.isArray(groups)||groups.length>8)throw new Error('teams.collaborationGroups must contain at most eight groups');
   const keys=new Set(),rooms=new Set();
@@ -30,7 +32,7 @@ export function validateCollaboration(teams) {
     if(!group||!/^[-a-z0-9_]{1,64}$/.test(group.key||'')||keys.has(group.key))throw new Error('Collaboration group keys must be unique URL-safe labels');
     keys.add(group.key);
     if(typeof group.name!=='string'||!group.name.trim()||group.name.length>80||/[\r\n\0]/.test(group.name))throw new Error('Collaboration groups need a name of at most 80 characters');
-    if(!Array.isArray(group.conversations)||group.conversations.length<2||group.conversations.length>8)throw new Error('A collaboration group needs two to eight configured conversations');
+    if(!Array.isArray(group.conversations)||group.conversations.length<2||group.conversations.length>incidentConversationLimit(teams))throw new Error('A collaboration group needs two to eight configured conversations');
     for(const room of group.conversations) {
       if(!room||typeof room.id!=='string'||room.id.length>512||rootConversation(room.id)!==room.id||!teams.conversations.includes(room.id)||rooms.has(room.id))throw new Error('Collaboration rooms must be distinct allowlisted root conversations');
       if(typeof room.name!=='string'||!room.name.trim()||room.name.length>80||/[\r\n\0]/.test(room.name))throw new Error('Collaboration rooms need a name of at most 80 characters');
@@ -54,6 +56,17 @@ export function authorizedRoom(service,conversation) {
   return conversation&&Number(conversation.enabled)===1&&conversation.service_key===service.key&&conversation.tenant_id===service.teams.tenantId&&teamsConversationAllowed(service.teams,conversation.conversation_id);
 }
 
+// Names describe an exact admitted conversation, including its historical
+// disabled record. They do not enable it or grant incident sharing authority.
+export function conversationDisplayName(service,conversation,labelValue){
+  const root=rootConversation(conversation.conversation_id);
+  if(!service||conversation.service_key!==service.key||conversation.tenant_id!==service.teams.tenantId||!teamsConversationAllowed(service.teams,conversation.conversation_id))return root;
+  const scope=roomScope(service,conversation.conversation_id);let name=scope.name;
+  if(name===root){try{const candidate=JSON.parse(conversation.reference).sreRoomName;if(validConversationName(candidate))name=candidate;}catch{}}
+  if(labelValue!==null&&labelValue!==undefined){try{const candidate=JSON.parse(labelValue).name;if(validConversationName(candidate))name=candidate;}catch{}}
+  return name;
+}
+
 export async function collaborationSnapshot(store,service,incidentId,q=store.db.query) {
   if(!service?.teams.collaborationGroups?.length&&!tenantAdmission(service?.teams))return {enabled:false,rooms:[],issues:[]};
   const [incident]=await q('SELECT status FROM sre_incidents WHERE id=?',[incidentId]);
@@ -68,10 +81,9 @@ export async function collaborationSnapshot(store,service,incidentId,q=store.db.
   const rooms=[];
   for(const conversation of allowed) {
     const scope=roomScope(service,conversation.conversation_id);
-    if(scope.name===scope.root)scope.name=short(JSON.parse(conversation.reference).sreRoomName||scope.name,80);
     if(!authorizedRoom(service,conversation)||(audience&&audience.scope_key!==scope.key))continue;
     const [label]=await q('SELECT value FROM sre_checkpoints WHERE id=?',['teams-room-label:'+conversation.id]);
-    if(label&&validConversationName(JSON.parse(label.value).name))scope.name=JSON.parse(label.value).name;
+    scope.name=conversationDisplayName(service,conversation,label?.value);
     const recent=await q("SELECT * FROM (SELECT r.evidence_id,r.reported_status,r.ordinal,e.observed_at,e.content,ROW_NUMBER() OVER(PARTITION BY COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_rank FROM sre_responder_rooms r JOIN sre_evidence e ON e.id=r.evidence_id LEFT JOIN sre_responder_people p ON p.evidence_id=e.id WHERE r.incident_id=? AND r.conversation_key=? AND r.kind='responder_update') ranked WHERE author_rank=1 ORDER BY observed_at DESC,ordinal DESC,evidence_id DESC LIMIT 6",[incidentId,conversation.id]);
     const [authors]=await q("SELECT COUNT(DISTINCT p.author_key) AS count FROM sre_responder_people p JOIN sre_responder_rooms r ON r.evidence_id=p.evidence_id WHERE p.incident_id=? AND p.conversation_key=? AND r.kind='responder_update'",[incidentId,conversation.id]);
     const [state]=await q('SELECT r.evidence_id,r.reported_status,e.observed_at,e.content FROM sre_responder_rooms r JOIN sre_evidence e ON e.id=r.evidence_id WHERE r.incident_id=? AND r.conversation_key=? AND r.reported_status IS NOT NULL ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC LIMIT 1',[incidentId,conversation.id]);
@@ -183,9 +195,9 @@ export function collaborationText(view,{generation}={}) {
     result=render(detail,items,issues);
     if(Buffer.byteLength(result,'utf8')<=13000)return result;
   }
-  // Configured names, keys and the eight-room boundary keep this final compact
-  // form below the outbox's 14 kB cutoff, including multilingual text.
-  return result;
+  // Preserve every room's identity when a larger configured audience cannot
+  // fit detailed reports. Explicitly mark those details as omitted.
+  return ['Shared incident coordination · '+view.incidentId,'Detailed reports omitted from this message; inspect the incident console.',...view.rooms.map(room=>short(room.name,32)+' — '+(room.reportedStatus||'no reported state'))].join('\n');
 }
 
 export class IncidentCollaboration {

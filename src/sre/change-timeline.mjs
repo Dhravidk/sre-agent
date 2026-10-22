@@ -1,6 +1,7 @@
 import {hash} from './security.mjs';
 import {pollScopeHash} from './poll-scope.mjs';
 import {StorageError} from './database.mjs';
+import {applyCiReservation} from './ci-history-window.mjs';
 
 const sha=v=>typeof v==='string'&&/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(v);
 const epoch=n=>Number.isSafeInteger(n)&&n>=0;
@@ -9,7 +10,7 @@ const stamp=v=>{const n=typeof v==='string'?Date.parse(v):NaN;return epoch(n)?n:
 const status=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,64}$/.test(v)?v:'unknown';
 export const changeTimelineLimits=Object.freeze({facts:500,referenceFacts:200,perReference:20,links:100,groups:100,sourcesPerGroup:25});
 
-function parseFact(row){
+export function parseChangeTimelineFact(row){
   try{
     const event=JSON.parse(row.source_event),payload=JSON.parse(row.payload),{observationOrigin:origin,...original}=payload;
     if(hash(event)!==row.body_hash||hash([event.source,event.serviceKey,event.id])!==row.id||event.source!==row.provider||event.serviceKey!==row.service_key||event.at!==Number(row.observed_at)||event.payload?.sha!==row.head_sha||(event.payload.stage||event.kind)!==row.stage||String(event.payload.number??'')!==String(row.change_number??'')||hash(original)!==hash(event.payload))throw Error();
@@ -68,8 +69,8 @@ function groupFacts(items,incidentId){
   return groups.sort((a,b)=>rank[a.relevance.kind]-rank[b.relevance.kind]||(b.latest.at??b.lastReceivedAt)-(a.latest.at??a.lastReceivedAt)||a.id.localeCompare(b.id));
 }
 
-export function projectChangeTimeline({rows,links,withdrawals,context,service,delivered}){
-  const facts=rows.map(parseFact),known=new Set(context.deployments.map(d=>d.sha).filter(sha)),heads=new Map();
+export function projectChangeTimeline({rows,links,withdrawals,context,service,delivered,ciWindow}){
+  const facts=rows.map(parseChangeTimelineFact),known=new Set(context.deployments.map(d=>d.sha).filter(sha)),heads=new Map();
   for(const e of context.evidence)for(const s of [e.content?.headSha,e.content?.baseSha,e.content?.sha,e.content?.mergedSha])if(sha(s))known.add(s);
   for(const link of links){
     const native=facts.filter(r=>r.provider===link.provider&&r.change_number===link.change_number),mru=native.filter(r=>['pre-merge','merge'].includes(r.stage)),latest=Math.max(-1,...mru.map(r=>r.observed_at)),head={all:new Set(),current:new Set(),merged:new Set()};
@@ -80,6 +81,11 @@ export function projectChangeTimeline({rows,links,withdrawals,context,service,de
   const selected=facts.filter(r=>known.has(r.head_sha)||delivered.has(r.id)||links.some(l=>l.provider===r.provider&&l.change_number===r.change_number));
   const items=selected.map(row=>{row.display=describe(row,service);row.relevance=relevance(row,{links,withdrawals,heads,delivered,context});row.recordedBeforeRestore=Boolean(context.recoveryFence&&row.received_at<context.recoveryFence.preparedAt);if(row.relevance.kind==='withdrawn-change')row.associationState='withdrawn';return row;});
   const groups=groupFacts(items,context.incident.id),limited=groups.length>changeTimelineLimits.groups;
+  if(ciWindow?.runs.length){
+    for(const group of groups)applyCiReservation(group,ciWindow);
+    const priority=group=>group.ciReserved?(group.ciSelectionRank<4?group.ciSelectionRank:6):group.provider==='gitlab'&&group.stage==='ci-update'&&group.relevance.kind==='linked-commit'&&(!group.scopeHash||group.latest.state!=='observed-version')?3:['provider-review','associated-change'].includes(group.relevance.kind)?4:7;
+    groups.sort((a,b)=>priority(a)-priority(b)||(b.ciSelectionAt||0)-(a.ciSelectionAt||0));
+  }
   return {items,groups:groups.slice(0,changeTimelineLimits.groups),groupsLimited:limited,totalGroupsInWindow:groups.length};
 }
 

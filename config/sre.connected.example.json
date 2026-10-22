@@ -51,6 +51,14 @@
         "base": "https://ENVIRONMENT.apps.dynatrace.com",
         "logField": "service.name",
         "logValue": "auction-api",
+        "logInvestigation": {
+          "maxQueries": 8,
+          "minWindowMs": 1000,
+          "scanLimitGbytes": 0.125,
+          "timeoutMs": 30000,
+          "levelField": "loglevel",
+          "environmentField": "deployment.environment"
+        },
         "tokenEnv": "DYNATRACE_OAUTH_TOKEN",
         "retryScope": "REPLACE-WITH-DYNATRACELOGS-ACCOUNT-LABEL"
       },

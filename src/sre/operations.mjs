@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { hash, redact } from './security.mjs';
 import { pollScopeHash } from './poll-scope.mjs';
 import {handledDeliveryInspectionSql} from './delivery-inspections.mjs';
+import {routeWaitReason} from './teams-routing.mjs';
 
 const instanceCondition=code=>code.startsWith('loop_')||code.startsWith('instance_poll_')||code.startsWith('instance_delivery_')||['clock_skew','observer_error'].includes(code);
 
@@ -25,8 +26,8 @@ export function operationalLimits(config) {
 }
 
 export class OperationalMonitor {
-  constructor({store,config,poller,outbox,schedulerEnabled=true}) {
-    Object.assign(this,{store,config,poller,outbox,schedulerEnabled});this.limits=operationalLimits(config);this.startedAt=store.clock();this.runtimeId=randomUUID();this.instanceId=config.instanceId||'agent';this.loops={tick:{running:false},poll:{running:false},commands:{running:false},...(outbox?{delivery:{running:false}}:{})};this.active=null;this.stopped=false;
+  constructor({store,config,poller,outbox,schedulerEnabled=true,investigationBudgetMs=0}) {
+    Object.assign(this,{store,config,poller,outbox,schedulerEnabled});this.limits=operationalLimits(config);this.tickLimitMs=investigationBudgetMs>0?Math.max(this.limits.maxTickDurationSeconds*1000,investigationBudgetMs+10000):this.limits.maxTickDurationSeconds*1000;this.startedAt=store.clock();this.runtimeId=randomUUID();this.instanceId=config.instanceId||'agent';this.loops={tick:{running:false},poll:{running:false},commands:{running:false},...(outbox?{delivery:{running:false}}:{})};this.active=null;this.stopped=false;
   }
   begin(lane) {Object.assign(this.loops[lane],{running:true,startedAt:this.store.clock(),lastStartedAt:this.store.clock()});}
   end(lane,error) {Object.assign(this.loops[lane],{running:false,lastFinishedAt:this.store.clock(),...(error?{error:redact(String(error.message)).slice(0,1000)}:{error:null,lastSuccessAt:this.store.clock()})});}
@@ -42,7 +43,7 @@ export class OperationalMonitor {
     const [checkpointRows,jobs,outbox,rollbacks,qa,reviews]=await Promise.all([
       pollCheckpointIds.length?this.store.db.query('SELECT id,value FROM sre_checkpoints WHERE id IN ('+pollCheckpointIds.map(()=>'?').join(',')+')',pollCheckpointIds):[],
       this.store.db.query("SELECT i.service_key,j.status,COUNT(*) AS count,MIN(j.created_at) AS oldest,MIN(j.lease_until) AS lease_until FROM sre_jobs j JOIN sre_incidents i ON i.id=j.incident_id WHERE j.status IN ('pending','running','dead') GROUP BY i.service_key,j.status"),
-      this.store.db.query("SELECT COALESCE(i.service_key,c.service_key) AS service_key,o.status,COUNT(*) AS count,MIN(o.created_at) AS oldest,MIN(o.lease_until) AS lease_until FROM sre_outbox o LEFT JOIN sre_incidents i ON i.id=o.incident_id LEFT JOIN sre_conversations c ON c.id=o.conversation_key WHERE o.status IN ('pending','sending','failed','unknown') AND NOT "+handledDeliveryInspectionSql('o')+' GROUP BY COALESCE(i.service_key,c.service_key),o.status',[recoveryFence?.restoreId??null]),
+      this.store.db.query("SELECT COALESCE(i.service_key,c.service_key) AS service_key,o.status,CASE WHEN o.status='pending' AND o.conversation_key IS NULL AND o.error=? THEN 1 ELSE 0 END AS route_wait,COUNT(*) AS count,MIN(o.created_at) AS oldest,MIN(o.lease_until) AS lease_until FROM sre_outbox o LEFT JOIN sre_incidents i ON i.id=o.incident_id LEFT JOIN sre_conversations c ON c.id=o.conversation_key WHERE o.status IN ('pending','sending','failed','unknown') AND NOT "+handledDeliveryInspectionSql('o')+' GROUP BY COALESCE(i.service_key,c.service_key),o.status,route_wait',[routeWaitReason,recoveryFence?.restoreId??null]),
       this.store.db.query("SELECT i.service_key,r.status,COUNT(*) AS count,MIN(COALESCE(r.approved_at,r.created_at)) AS oldest,MIN(r.lease_until) AS lease_until FROM sre_rollbacks r JOIN sre_incidents i ON i.id=r.incident_id WHERE r.status IN ('checking','dispatching','dispatched','unknown') GROUP BY i.service_key,r.status"),
       this.store.db.query("SELECT i.service_key,r.status,COUNT(*) AS count,MIN(r.created_at) AS oldest,MIN(r.lease_until) AS lease_until FROM sre_fix_requests r JOIN sre_incidents i ON i.id=r.incident_id WHERE r.status IN ('approved','running','failed','unknown','superseded') AND (r.status<>'superseded' OR NOT EXISTS(SELECT 1 FROM sre_fix_requests fresh JOIN sre_fix_plans plan ON plan.id=fresh.plan_id WHERE fresh.incident_id=i.id AND fresh.status='passed' AND plan.revision=i.revision AND fresh.created_at>=r.created_at)) GROUP BY i.service_key,r.status"),
       this.store.db.query("SELECT service_key,waiting,exhausted,COUNT(*) AS count,MIN(id) AS incident_id FROM (SELECT i.id,i.service_key,CASE WHEN EXISTS(SELECT 1 FROM sre_jobs j WHERE j.incident_id=i.id AND j.status IN ('pending','running')) THEN 1 ELSE 0 END AS waiting,CASE WHEN EXISTS(SELECT 1 FROM sre_jobs j WHERE j.incident_id=i.id AND j.status='dead') THEN 1 ELSE 0 END AS exhausted FROM sre_incidents i WHERE i.status<>'resolved' AND (i.analysis IS NULL OR i.analysis='' OR NOT EXISTS(SELECT 1 FROM sre_assessments a WHERE a.incident_id=i.id AND a.revision=i.revision AND a.body=i.analysis) OR EXISTS(SELECT 1 FROM sre_assessments a WHERE a.incident_id=i.id AND a.revision>i.revision))) unreviewed GROUP BY service_key,waiting,exhausted"),
@@ -100,7 +101,10 @@ export class OperationalMonitor {
     for(const row of outbox) {
       const count=Number(row.count),key='outbox:'+row.status;
       if(['unknown','failed'].includes(row.status))add(row.service_key,key,'notification_'+row.status,row.status==='unknown'?'A Teams delivery outcome is unknown; inspect the conversation before retrying.':'Teams delivery failed; inspect authentication and conversation access.',{count});
-      if(row.status==='pending'&&this.config.teamsMode==='live'&&coordinationNow-Number(row.oldest)>this.limits.maxQueueAgeSeconds*1000)add(row.service_key,key,'notification_delayed','Teams messages are waiting beyond the configured queue age.',{count});
+      if(row.status==='pending'&&this.config.teamsMode==='live'&&coordinationNow-Number(row.oldest)>this.limits.maxQueueAgeSeconds*1000){
+        if(Number(row.route_wait))add(row.service_key,key+':unrouted','notification_unrouted','A routing check found no installed and authorized Teams conversation. Connect an approved conversation to the incident and check bot access.',{count});
+        else add(row.service_key,key,'notification_delayed','Teams messages are waiting beyond the configured queue age.',{count});
+      }
       if(row.status==='sending'&&Number(row.lease_until)<coordinationNow-10000)add(row.service_key,key,'notification_stuck','A Teams delivery lease expired without reconciliation.',{count});
     }
     const transport=this.outbox?.deliveryState();
@@ -120,7 +124,7 @@ export class OperationalMonitor {
       if(row.status==='approved'&&coordinationNow-Number(row.oldest)>this.limits.maxQueueAgeSeconds*1000)add(row.service_key,key,'qa_delayed','Approved local QA is waiting beyond the configured queue age.',{count});
     }
     for(const [name,loop] of Object.entries(this.loops)) {
-      const limit=(name==='poll'?this.limits.maxPollDurationSeconds:this.limits.maxTickDurationSeconds)*1000;
+      const limit=name==='tick'?this.tickLimitMs:(name==='poll'?this.limits.maxPollDurationSeconds:this.limits.maxTickDurationSeconds)*1000;
       if(loop.error)add(null,'loop:'+name,'loop_error',name+' loop failed: '+loop.error);
       else if(loop.running&&now-loop.startedAt>limit)add(null,'loop:'+name,'loop_stalled',name+' loop has exceeded its configured execution time.');
       else if(this.schedulerEnabled&&!loop.running&&now-(loop.lastFinishedAt??this.startedAt)>Math.max(this.limits.startupGraceSeconds*1000,name==='poll'?(this.config.pollIntervalMs||60000)*3:5000))add(null,'loop:'+name,'loop_missing',name+' loop has stopped making progress.');

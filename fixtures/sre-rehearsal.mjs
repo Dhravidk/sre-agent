@@ -34,7 +34,9 @@ export async function seedRehearsal(runtime){
   const {store,config}=runtime,service=config.services[0];
   if(config.mode!=='local'||config.agentMode!=='rules'||config.teamsMode!=='off'||config.services.length!==1||['gitlab','github','dynatrace','dynatraceLogs','servicenow','jira'].some(name=>service[name]?.enabled)||!service.logMonitors?.some(r=>hash(r)===hash(rule)))throw Error('The rehearsal requires its offline rules profile, disabled live readers and Teams off');
   let state=await store.db.transaction(async q=>{
-    const [row]=await q('SELECT value FROM sre_checkpoints WHERE id=?',[checkpointId]);if(row)return decode(row);
+    const [row]=await q('SELECT value FROM sre_checkpoints WHERE id=?',[checkpointId]),fence=await store.restoreFence(q);
+    if(row){const saved=decode(row);if(fence&&saved.phase!=='ready')throw Error('A restored rehearsal is incomplete; do not resume scripted setup after database restore. Inspect retained history or use a new dedicated database.');return saved;}
+    if(fence)throw Error('The restored database has no completed rehearsal metadata; inspect retained history or use a new dedicated database. Scripted setup will not run.');
     const [count]=await q('SELECT COUNT(*) AS count FROM sre_events');if(Number(count.count))throw Error('Use a dedicated empty rehearsal database; existing incident history will not be reseeded');
     const body={version:1,phase:'seeding',runId:randomUUID(),startedAt:await store.coordinationNow(q),configHash:configHash(service)};
     await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?)',[checkpointId,JSON.stringify({...body,checksum:hash(body)}),body.startedAt]);return body;

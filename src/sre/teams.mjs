@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { conversationKey } from './store.mjs';
 import { StorageError } from './database.mjs';
-import {rootConversation,roomScope,reportedStates,IncidentCollaboration,collaborationText,parseCoordinationItem} from './collaboration.mjs';
+import {rootConversation,roomScope,incidentConversationLimit,reportedStates,IncidentCollaboration,collaborationText,parseCoordinationItem} from './collaboration.mjs';
 import {teamsConversationAllowed,teamsActivityAllowed,tenantAdmission,requireTenantMember,activityTeamId} from './teams-access.mjs';
 import {teamsMessage} from './teams-format.mjs';
 import {signalDigestText} from './signal-digest.mjs';
@@ -66,7 +66,7 @@ export class TeamsRouter {
             const [active]=await q('SELECT COUNT(*) AS count FROM sre_conversations WHERE incident_id=? AND enabled=1 AND id<>?',[incidentId,room.id]);
             // Keep the thread reachable if other groups filled its old slot.
             // An explicit join will explain the existing eight-room boundary.
-            if(Number(active.count)>=8)incidentId=null;
+            if(Number(active.count)>=incidentConversationLimit(service.teams))incidentId=null;
           }
           await q('UPDATE sre_conversations SET enabled=1,incident_id=?,updated_at=? WHERE id=?',[incidentId,now,room.id]);
         }

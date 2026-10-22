@@ -1,8 +1,9 @@
 import {hash} from './security.mjs';
 import {latestProblemSnapshots,problemIdentity} from './runtime-problems.mjs';
+import {canonicalLogValue,logRecordHash} from './log-observation.mjs';
 
 export const signalLimits=Object.freeze({candidates:240,evidence:80,records:2000,groups:12,changes:8});
-const logRow=row=>['log','logs'].includes(row.kind)&&['dynatrace','dynatrace-logs','logs'].includes(row.source)||row.source==='log-monitor'&&row.kind==='problem';
+const logRow=row=>['log','logs','log_triage'].includes(row.kind)&&['dynatrace','dynatrace-logs','logs'].includes(row.source)||row.source==='log-monitor'&&row.kind==='problem';
 export const changeEvidence=row=>['github','gitlab'].includes(row.source)&&(['code_review','release_diff','linked_changes','deployments'].includes(row.kind)||row.kind==='change'&&['deployment','review'].includes(row.content?.comparisonKind));
 const short=(value,n=160)=>Array.from(typeof value==='string'?value:'').slice(0,n).join('');
 const scalar=value=>typeof value==='string'||typeof value==='number'?String(value):'';
@@ -14,7 +15,7 @@ const healthSuccess=group=>['INFO','DEBUG','TRACE'].includes(group.level)&&['/he
 const records=row=>Array.isArray(row.content?.records)?row.content.records:[row.content];
 const logSource=(row,index)=>{const source=row.source==='log-monitor'&&Array.isArray(row.content?.recordSources)?row.content.recordSources[index]:row.source;return source==='dynatrace-logs'?'dynatrace':source;};
 
-function logIdentity(record,source) {
+export function logIdentity(record,source) {
   const level=field(record,['loglevel','level','severity']).toUpperCase()||'UNKNOWN';
   const requestId=field(record,['request.id','requestId','request_id']),traceId=field(record,['trace.id','trace_id','traceId']);
   let message=field(record,['content','message','text']);
@@ -22,7 +23,7 @@ function logIdentity(record,source) {
   // numbers, releases and arbitrary numbers in the message stay significant.
   for(const [value,label] of [[requestId,'<request-id>'],[traceId,'<trace-id>']])if(value.length>=8)message=message.split(value).join(label);
   const identity={source,level,code:field(record,['error.code','errorCode','code']),errorType:field(record,['error.type','exception.type']),statusCode:field(record,['http.response.status_code','http.status_code','statusCode']),entity:field(record,['dt.entity.service','entityId','service.name','service']),environment:field(record,['deployment.environment','environment','env']),region:field(record,['cloud.region','region']),operation:field(record,['operation','http.route','endpoint']),version:field(record,['service.version','release','version','sha']),message};
-  const unknown=identity.message||identity.code||identity.errorType||identity.statusCode?'':hash(record);
+  const unknown=identity.message||identity.code||identity.errorType||identity.statusCode?'':hash(canonicalLogValue(record));
   return {identity,key:hash([identity,unknown]),rank:severity[level]??4};
 }
 
@@ -54,9 +55,11 @@ export function buildSignalDigest({evidence=[],deployments=[],incident={},eviden
     if(batch.index>=batch.items.length||scanned>=signalLimits.records)continue;
     const recordIndex=batch.index,record=batch.items[batch.index++],row=batch.row,source=logSource(row,recordIndex);scanned++;
     if(!record||typeof record!=='object'||Array.isArray(record)){invalidRecords++;continue;}
-    const {identity,key,rank}=logIdentity(record,source),recordAt=stamp(record.timestamp??record.at);
+    const {identity,key:projectedKey,rank}=logIdentity(record,source),recordAt=stamp(record.timestamp??record.at);
+    const origin=row.kind==='log_triage'&&row.content?.hostDataReduction===true&&typeof row.content.derivedFrom==='string'?row.content.triage?.sampleOrigins?.[recordIndex]:null;
+    const boundOrigin=/^[a-f0-9]{64}$/.test(origin?.recordHash||'')&&/^[a-f0-9]{64}$/.test(origin?.signalKey||'')?origin:null,key=boundOrigin?.signalKey||projectedKey;
     if(recordAt===null)missingTimestamps++;
-    const unique=recordAt===null?null:hash([source,record]);
+    const unique=recordAt===null?null:boundOrigin?.recordHash||logRecordHash(source,record);
     const group=groups.get(key)||{key,...Object.fromEntries(Object.entries(identity).map(([k,v])=>[k,short(v,k==='message'?220:100)])),rank,observations:0,duplicateObservations:0,firstAt:null,lastAt:null,evidenceIds:[]};
     if(!group.evidenceIds.includes(row.id)&&group.evidenceIds.length<4)group.evidenceIds.push(row.id);
     if(unique&&seen.has(unique)){duplicates++;group.duplicateObservations++;}
@@ -67,7 +70,7 @@ export function buildSignalDigest({evidence=[],deployments=[],incident={},eviden
   const history=changes.slice(0,signalLimits.changes).map(row=>{
     const content=row.content||{},comparison=content.comparison||{},mr=content.mergeRequest||comparison.review?.mergeRequest;
     const files=comparison.diffs||comparison.files||content.diffs||content.files;
-    const paths=(Array.isArray(files)?files:[]).map(file=>file?.new_path||file?.filename||file?.old_path).filter(path=>typeof path==='string');
+    const paths=(Array.isArray(files)?files:[]).map(file=>file?.new_path||file?.filename||file?.old_path||file?.path).filter(path=>typeof path==='string');
     if(!paths.length&&content.policySources?.changed!==false&&content.policySources?.complete===true&&typeof content.policySources.base==='string'&&typeof content.policySources.head==='string'&&typeof content.policySources.path==='string')paths.push(content.policySources.path);
     return {evidenceId:row.id,provider:row.source,at:row.observed_at,comparisonKind:content.comparisonKind||'unknown',baseSha:fullSha(content.baseSha)?content.baseSha:null,headSha:fullSha(content.headSha)?content.headSha:null,complete:content.complete===true&&fullSha(content.baseSha)&&fullSha(content.headSha),paths:paths.slice(0,8).map(path=>short(path,160)),omittedPaths:Math.max(0,paths.length-8),mergeRequest:mr?{number:mr.iid??mr.number,title:short(mr.title),state:short(mr.state,40)}:null,commits:(Array.isArray(comparison.commits)?comparison.commits:[]).filter(commit=>commit&&fullSha(commit.id||commit.sha)).slice(0,5).map(commit=>({sha:commit.id||commit.sha,title:short(commit.title||commit.commit?.message),at:stamp(commit.created_at||commit.committed_date)})),codeInspection:content.policySources?.complete===true?'Known module sources available; general code reasoning still requires investigation.':'Full immutable source inspection is unavailable or incomplete.'};
   });

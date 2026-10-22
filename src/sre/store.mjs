@@ -1,3 +1,9 @@
+import {batchQuestions} from './question-batch.mjs';
+import {requestSchedule,extendRequestFreshness,claimRequestFreshness,requeueStaleRequest,freshnessClaimSql} from './request-freshness.mjs';
+import {queueModelMessages} from './model-notices.mjs';
+import {investigatorLimit,investigatorSlots,investigatorLeaseName,lockInvestigationScheduler,configureInvestigationScheduler,assertInvestigationScheduler} from './investigation-scheduler.mjs';
+import {ModelQuotaError,modelQuota,holdModelQuota,quotaBlocksClaim,resumeModelQuota} from './model-quota.mjs';
+import {materialChangeObservations} from './change-observation-notices.mjs';
 import { randomUUID } from 'node:crypto';
 import { schema,StorageError } from './database.mjs';
 import { assertText, hash, redact } from './security.mjs';
@@ -6,7 +12,7 @@ import { verifyRollbackNoChange } from './rollback-result.mjs';
 import { sourceStateKey, sourceState, staleSourceUpdate, restoreServiceNowStates,sameAlertObservation } from './source-state.mjs';
 import { retryInvestigation } from './investigation-retry.mjs';
 import { readRestoreFence } from './restore-recovery.mjs';
-import { authorizedRoom,roomScope,reportedStates,collaborationSnapshot,validCoordinationItem,validConversationName } from './collaboration.mjs';
+import { authorizedRoom,roomScope,reportedStates,collaborationSnapshot,validCoordinationItem,validConversationName,incidentConversationLimit } from './collaboration.mjs';
 import {signalLimits,selectSignalEvidence,buildSignalDigest} from './signal-digest.mjs';
 import {recordChangeEvent,linkedChangeIncidents} from './casework.mjs';
 import {associationContext} from './change-associations.mjs';
@@ -16,6 +22,7 @@ import {ciReadState} from './ci-observations.mjs';
 import {recordContactMessage} from './contact-messages.mjs';
 import {handledDeliveryInspectionSql,projectDeliveryInspections,preparedDeliveryRecipient} from './delivery-inspections.mjs';
 import {routeWaitReason,alertConversationId} from './teams-routing.mjs';
+import {questionBatchLimits} from './question-batch-budget.mjs';
 
 const json = (value) => JSON.stringify(value);
 const parse = (value) => value ? JSON.parse(value) : null;
@@ -31,11 +38,11 @@ function prepareIngest(input){
 }
 // Proposed next checks can answer a question without changing the incident's
 // shared understanding. Real responder actions use the separate work ledger.
-const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypotheses),a.changeAssessment,a.candidateSha,stableClaims(a.unknowns),a.rollback,a.trackedChanges,a.contacts?.directoryId,a.contacts?.contacts.map(c=>[c.id,c.role]),a.risk?.likelihood,a.risk?.confidence,stableClaims(a.risk?.assumptions),stableClaims(a.risk?.alternatives),a.risk?.scope?.stage,a.risk?.scope?.headSha,a.risk?.scope?.mergedSha]):null;
+const notificationKey=a=>a?hash([a.summary,a.incidentStatus,stableClaims(a.hypotheses),a.changeAssessment,a.candidateSha,stableClaims(a.unknowns),a.rollback,a.trackedChanges,materialChangeObservations(a.observedChanges||[]),a.observedChangesLimited||false,a.contacts?.directoryId,a.contacts?.contacts.map(c=>[c.id,c.role]),a.risk?.likelihood,a.risk?.confidence,stableClaims(a.risk?.assumptions),stableClaims(a.risk?.alternatives),a.risk?.scope?.stage,a.risk?.scope?.headSha,a.risk?.scope?.mergedSha]):null;
 export const conversationKey = (tenant, id) => hash([tenant, id]).slice(0, 32);
 
 export class SreStore {
-  constructor(db, { clock = Date.now, simulation = false, services = [] } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services; }
+  constructor(db, { clock = Date.now, simulation = false, services = [], questionBatchLimit = 1, investigationConcurrency = 1, freshnessRetries = questionBatchLimit>1 } = {}) { this.db = db; this.clock = clock; this.simulation=simulation; this.services=services;if(!Number.isInteger(questionBatchLimit)||questionBatchLimit<1||questionBatchLimit>questionBatchLimits.requests)throw Error('Invalid question batch limit');if(typeof freshnessRetries!=='boolean')throw Error('Invalid request freshness policy');this.questionBatchLimit=questionBatchLimit;this.freshnessRetries=freshnessRetries&&questionBatchLimit>1;this.investigationConcurrency=investigatorLimit(investigationConcurrency); }
   async coordinationNow(query=this.db.query) {
     // PostgreSQL coordinates independent hosts. Its transaction-start timestamp
     // would remain stale across a lock wait, so read the live server clock.
@@ -70,6 +77,7 @@ export class SreStore {
       for(const sql of schema)await q(sql);
     });
     else for(const sql of schema)await this.db.query(sql);
+    await configureInvestigationScheduler(this);
     await this.upgradeServiceNowStates();
     // Add a relational room projection for old report history without changing
     // its evidence IDs or rewriting the original messages.
@@ -255,6 +263,7 @@ export class SreStore {
         await q(`INSERT INTO sre_evidence(id,incident_id,source,kind,observed_at,content) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`, [hash([id,incident.id]),incident.id,event.source,kind,event.at,json(content)]);
         await this.projectResponder({id:hash([id,incident.id]),incident_id:incident.id,source:event.source,kind:event.kind,content:event.payload||event},q,event.conversationKey);
         await q(`INSERT INTO sre_jobs(id,incident_id,payload,status,attempts,next_at,created_at) VALUES(?,?,?,'pending',0,?,?) ON CONFLICT DO NOTHING`, [hash(['investigate',id,incident.id]),incident.id,json({ eventId:id, question:event.kind === 'question' ? event.payload?.text : null, conversationKey:event.conversationKey || null,...(alertBinding?.joined?{replyConversationKey:alertBinding.conversationKey}:{}) }),receivedAt,receivedAt]);
+        if(this.freshnessRetries)await extendRequestFreshness(q,incident.id,receivedAt);
       }
       await finishChangeRead(this,q,readBoundary,event,id);
       return { eventId:id, incidentId:incidents[0]?.id || null, queued:incidents.length, duplicate:false };
@@ -267,10 +276,11 @@ export class SreStore {
     const responderEvidence=await this.db.query("SELECT * FROM (SELECT people.*,ROW_NUMBER() OVER (PARTITION BY room_key ORDER BY author_rank,observed_at DESC,room_order DESC,id DESC) AS room_rank FROM (SELECT e.*,COALESCE(r.conversation_key,'') AS room_key,COALESCE(r.ordinal,0) AS room_order,COALESCE(p.author_key,'unknown') AS author_key,ROW_NUMBER() OVER (PARTITION BY COALESCE(r.conversation_key,''),COALESCE(p.author_key,'unknown') ORDER BY e.observed_at DESC,r.ordinal DESC,e.id DESC) AS author_rank FROM sre_evidence e LEFT JOIN sre_responder_rooms r ON r.evidence_id=e.id LEFT JOIN sre_responder_people p ON p.evidence_id=e.id WHERE e.incident_id=? AND e.kind IN ('responder_update','question')) people) ranked ORDER BY room_rank,author_rank,observed_at DESC,room_order DESC,id DESC LIMIT 40",[id]);
     responderEvidence.sort((a,b)=>Number(b.observed_at)-Number(a.observed_at)||Number(b.room_order)-Number(a.room_order)||b.id.localeCompare(a.id));
     const [responderCount]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind IN ('responder_update','question')",[id]);
-    const candidates=(await this.db.query("SELECT * FROM (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY source,kind ORDER BY observed_at DESC,id DESC) AS source_rank FROM sre_evidence e WHERE incident_id=? AND kind NOT IN ('responder_update','question')) ranked ORDER BY source_rank,observed_at DESC,id DESC LIMIT ?",[id,signalLimits.candidates])).map(({source_rank,...row})=>({...row,observed_at:Number(row.observed_at),content:parse(row.content)}));
-    const [telemetryCount]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind NOT IN ('responder_update','question')",[id]);
+    const candidates=(await this.db.query("SELECT * FROM (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY source,kind ORDER BY observed_at DESC,id DESC) AS source_rank FROM sre_evidence e WHERE incident_id=? AND kind NOT IN ('responder_update','question','log_page')) ranked ORDER BY source_rank,observed_at DESC,id DESC LIMIT ?",[id,signalLimits.candidates])).map(({source_rank,...row})=>({...row,observed_at:Number(row.observed_at),content:parse(row.content)}));
+    const [telemetryCount]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind NOT IN ('responder_update','question','log_page')",[id]);
+    const [rawLogPages]=await this.db.query("SELECT COUNT(*) AS count FROM sre_evidence WHERE incident_id=? AND kind='log_page'",[id]);
     const selection=selectSignalEvidence(candidates),telemetry=selection.selected.map(row=>({...row,content:json(row.content)}));
-    const evidenceWindow={totalAvailable:Number(telemetryCount.count)+Number(responderCount.count),candidatesRead:candidates.length,candidatesLimited:Number(telemetryCount.count)>candidates.length,redundantSnapshots:selection.redundant,telemetrySelected:telemetry.length,problemSnapshotConflicts:selection.problemSnapshotConflicts};
+    const evidenceWindow={totalAvailable:Number(telemetryCount.count)+Number(responderCount.count),rawLogPagesRetained:Number(rawLogPages.count),candidatesRead:candidates.length,candidatesLimited:Number(telemetryCount.count)>candidates.length,redundantSnapshots:selection.redundant,telemetrySelected:telemetry.length,problemSnapshotConflicts:selection.problemSnapshotConflicts};
     const evidence=[...responderEvidence,...telemetry];
     const deployments = await this.db.query('SELECT * FROM sre_deployments WHERE service_key=? ORDER BY occurred_at DESC LIMIT 200', [incident.service_key]);
     const run=this.simulation?evidence.map(x=>parse(x.content)?.simulationRunId).find(Boolean):null;
@@ -291,6 +301,8 @@ export class SreStore {
     return { assessmentStatus,changeAssociations:await associationContext(this,id),signalDigest,evidenceWindow,simulatedRollback:simulatedRollback?.id||null,recoveryFence:await this.restoreFence(),incident:{...incident,started_at:Number(incident.started_at),updated_at:Number(incident.updated_at),analysis:parse(incident.analysis)}, session:{...session,remote_state:parse(session?.remote_state)}, evidence:evidence.map(x=>({...x,observed_at:Number(x.observed_at),content:parse(x.content)})), responderContext:{evidenceIds:responderEvidence.map(x=>x.id).reverse(),totalAvailable:Number(responderCount.count),note:'Chronological IDs with a fair window for each delivered conversation. Earlier Teams history, attachments, edits, and deletions are not synchronized. Reports are not verified recovery or authorization.'}, collaboration,jobs,retries:retries.map(row=>({...row,requested_by:parse(row.requested_by),created_at:Number(row.created_at)})),deployments:scopedDeployments,assessmentHistory:history.map(x=>({revision:x.revision,evaluatedAt:Number(x.evaluated_at),risk:parse(x.body).risk})) };
   }
   retryInvestigation(input) {return retryInvestigation(this,input);}
+  modelQuota() {return modelQuota(this);}
+  resumeModelQuota(input) {return resumeModelQuota(this,input);}
   async conversation(incidentId) {
     // UI history is separate from the model's bounded evidence snapshot.
     const questions=await this.db.query("SELECT e.id,e.observed_at,e.content,COALESCE(r.ordinal,0) AS receipt_order FROM sre_evidence e LEFT JOIN sre_responder_rooms r ON r.evidence_id=e.id WHERE e.incident_id=? AND e.kind='question' ORDER BY e.observed_at DESC,COALESCE(r.ordinal,0) DESC,e.id DESC LIMIT 40",[incidentId]);
@@ -315,18 +327,38 @@ export class SreStore {
   async claim(owner, leaseMs = 60000) {
     if(!Number.isSafeInteger(leaseMs)||leaseMs<=0)throw new Error('Invalid investigation lease duration');
     return this.db.transaction(async (q) => {
+      await lockInvestigationScheduler(this,q);
+      await assertInvestigationScheduler(this,q);
       const now=await this.coordinationNow(q);
-      const lease = await q(`INSERT INTO sre_locks(name,owner,expires_at) VALUES('single-agent',?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at WHERE sre_locks.expires_at<=? OR sre_locks.owner=? RETURNING owner,expires_at`, [owner,now+leaseMs,now,owner]);
-      if (!lease.length) return null;
+      if(await quotaBlocksClaim(this,q,now))return null;
+      const [owned]=await q("SELECT id FROM sre_jobs WHERE status='running' AND lease_owner=? AND lease_until>? LIMIT 1",[owner,now]);
+      if(owned)return null;
+      let lease,leaseName;
+      for(const name of investigatorSlots.slice(0,this.investigationConcurrency)){
+        const rows=await q(`INSERT INTO sre_locks(name,owner,expires_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at WHERE sre_locks.expires_at<=? OR sre_locks.owner=? RETURNING owner,expires_at`,[name,owner,now+leaseMs,now,owner]);
+        if(rows.length){lease=rows;leaseName=name;break;}
+      }
+      if(!lease)return null;
       const readyAt=await this.coordinationNow(q);
       if(Number(lease[0].expires_at)<=readyAt)throw new Error('Agent lease expired while claiming work');
       // Requeued work joins at its new eligibility time. Keeping its original
       // age here would let one changing incident monopolize the sole worker.
-      const [job] = await q(`SELECT * FROM sre_jobs WHERE (status='pending' AND next_at<=?) OR (status='running' AND lease_until<=?) ORDER BY CASE WHEN status='running' THEN lease_until ELSE next_at END,created_at,id LIMIT 1` + (this.db.dialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : ''), [readyAt,readyAt]);
-      if (!job) return null;
-      let payload=parse(job.payload);
-      if(!payload.question) {
-        const pending=await q("SELECT id,payload FROM sre_jobs WHERE incident_id=? AND status='pending' AND id<>?",[job.incident_id,job.id]);
+      const questionField=this.db.dialect==='postgres'?"(j.payload::jsonb->>'question')":"json_extract(j.payload,'$.question')";
+      // Preserve incident fairness before preferring an explicit request over
+      // another update-only turn for that incident. The current evidence is
+      // collected either way; eligible updates can share the question's turn.
+      const eligible="((j.status='pending' AND j.next_at<=?) OR (j.status='running' AND j.lease_until<=?)) AND NOT EXISTS(SELECT 1 FROM sre_jobs active WHERE active.incident_id=j.incident_id AND active.status='running' AND active.lease_until>?)";
+      const freshness=this.freshnessRetries?freshnessClaimSql(this.db.dialect):{join:'',eligible:'',parentOrder:''};
+      const fairSql="SELECT j.*,f.updated_at AS last_scheduled_at FROM sre_jobs j LEFT JOIN sre_checkpoints f ON f.id='agent-scheduled:'||j.incident_id"+freshness.join+" WHERE "+eligible+freshness.eligible+" ORDER BY CASE WHEN j.status='running' THEN 0 ELSE 1 END,COALESCE(f.updated_at,0),"+freshness.parentOrder+"CASE WHEN COALESCE("+questionField+",'')<>'' THEN 0 ELSE 1 END,CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1"+(this.db.dialect==='postgres'?' FOR UPDATE OF j SKIP LOCKED':'');
+      const [job] = await q(this.questionBatchLimit>1?fairSql:`SELECT j.* FROM sre_jobs j WHERE ${eligible} ORDER BY CASE WHEN j.status='running' THEN j.lease_until ELSE j.next_at END,j.created_at,j.id LIMIT 1` + (this.db.dialect === 'postgres' ? ' FOR UPDATE OF j SKIP LOCKED' : ''), [readyAt,readyAt,readyAt,...(this.freshnessRetries?[readyAt]:[])]);
+      if (!job) {if(this.investigationConcurrency>1)await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[leaseName,owner]);return null;}
+      if(this.freshnessRetries&&!await claimRequestFreshness(q,job.incident_id,await this.coordinationNow(q),this.db.dialect)){
+        if(this.investigationConcurrency>1)await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[leaseName,owner]);return null;
+      }
+      if(this.questionBatchLimit>1)await q('INSERT INTO sre_checkpoints(id,value,updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at',['agent-scheduled:'+job.incident_id,json({jobId:job.id}),readyAt]);
+      let payload=await batchQuestions(q,job,parse(job.payload),this.questionBatchLimit,{dialect:this.db.dialect,now:readyAt});
+      if(!payload.question||this.questionBatchLimit>1) {
+        const pending=await q("SELECT id,payload FROM sre_jobs WHERE incident_id=? AND status='pending' AND id<>? AND next_at<=?",[job.incident_id,job.id,readyAt]);
         const replies=new Set(requiredReplyKeys(payload));
         for(const older of pending){
           const other=parse(older.payload);if(other.question)continue;
@@ -341,20 +373,22 @@ export class SreStore {
           delete payload.replyConversationKey;
         }
       }
+      const scheduling=this.freshnessRetries&&(payload.question||requiredReplyKeys(payload).length)?await requestSchedule(q,job,job.last_scheduled_at,readyAt):null;
       await q("UPDATE sre_jobs SET status='running',payload=?,attempts=attempts+1,lease_owner=?,lease_until=? WHERE id=?", [json(payload),owner,now+leaseMs,job.id]);
       if(Number(lease[0].expires_at)<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the claim');
-      return {...job,attempts:Number(job.attempts)+1,payload,lease_owner:owner,lease_until:now+leaseMs};
+      return {...job,attempts:Number(job.attempts)+1,payload,scheduling,lease_owner:owner,lease_until:now+leaseMs,lease_name:leaseName};
     });
   }
-  async heartbeat(owner, jobId, leaseMs = 60000) {
+  async heartbeat(owner, jobId, leaseMs = 60000, leaseName = 'single-agent') {
+    investigatorLeaseName({lease_name:leaseName});
     if(!Number.isSafeInteger(leaseMs)||leaseMs<=0)throw new Error('Invalid investigation lease duration');
     return this.db.transaction(async(q) => {
-      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[leaseName]);
       const [job]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[jobId]);
       const now=await this.coordinationNow(q);
       if(!lease||lease.owner!==owner||Number(lease.expires_at)<=now)throw new Error('Agent lease lost');
       if(!job||job.status!=='running'||job.lease_owner!==owner||Number(job.lease_until)<=now)throw new Error('Job lease lost');
-      await q('UPDATE sre_locks SET expires_at=? WHERE name=? AND owner=?',[now+leaseMs,'single-agent',owner]);
+      await q('UPDATE sre_locks SET expires_at=? WHERE name=? AND owner=?',[now+leaseMs,leaseName,owner]);
       await q("UPDATE sre_jobs SET lease_until=? WHERE id=? AND lease_owner=? AND status='running'",[now+leaseMs,jobId,owner]);
       if(now+leaseMs<=await this.coordinationNow(q))throw new Error('Agent lease expired during heartbeat');
     });
@@ -366,7 +400,7 @@ export class SreStore {
     if(!job)return this.db.query('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?',[json(remoteState),incidentId]);
     if(job.incident_id!==incidentId)throw new Error('Investigation checkpoint is outside the job incident');
     return this.db.transaction(async q=>{
-      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[investigatorLeaseName(job)]);
       if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=await this.coordinationNow(q))throw new Error('Agent lease lost');
       const [current]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       if(!current||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.lease_until)<=await this.coordinationNow(q))throw new Error('Job lease lost');
@@ -377,7 +411,7 @@ export class SreStore {
   }
   async finish(job, analysis, remoteState, expectedRevision, notification={}) {
     return this.db.transaction(async(q) => {
-      const [lease] = await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''), ['single-agent']);
+      const [lease] = await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''), [investigatorLeaseName(job)]);
       if (!lease || lease.owner !== job.lease_owner || Number(lease.expires_at) <= await this.coordinationNow(q)) throw new Error('Agent lease lost');
       const [current]=await q('SELECT lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       const deadline=Math.min(Number(lease.expires_at),Number(current?.lease_until));
@@ -388,18 +422,25 @@ export class SreStore {
       if(expectedRevision!==undefined && Number(prior.revision)!==expectedRevision) {
         await q("UPDATE sre_jobs SET status='superseded' WHERE id=?",[job.id]);
         // Questions and all coalesced reply destinations survive fresh telemetry.
-        if(job.payload.question||requiredReplyKeys(job.payload).length)await q("UPDATE sre_jobs SET status='pending',next_at=? WHERE id=?",[await this.coordinationNow(q),job.id]);
+        if(job.payload.question||requiredReplyKeys(job.payload).length){
+          const now=await this.coordinationNow(q);
+          if(this.freshnessRetries)await requeueStaleRequest(q,job,now);
+          else await q("UPDATE sre_jobs SET status='pending',next_at=? WHERE id=?",[now,job.id]);
+        }
         if(remoteState)await q('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?',[json(remoteState),job.incident_id]);
         if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the superseded result');
+        if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the superseded result');}
         return null;
       }
-      const changed = notificationKey(parse(prior.analysis)) !== notificationKey(analysis);
+      const previous=parse(prior.analysis),changed = notificationKey(previous) !== notificationKey(analysis);
       await q('UPDATE sre_incidents SET analysis=? WHERE id=?', [json(analysis),job.incident_id]);
       await q('INSERT INTO sre_assessments(id,incident_id,revision,evaluated_at,body) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',[job.id,job.incident_id,Number(prior.revision),await this.coordinationNow(q),json(analysis)]);
       if (remoteState) await q('UPDATE sre_sessions SET remote_state=? WHERE incident_id=?', [json(remoteState),job.incident_id]);
       const id=hash(['analysis',job.id]);
       const origin=job.payload.question?job.payload.conversationKey:null,replies=new Set(requiredReplyKeys(job.payload)),notice=notification.text??analysis.text,contactFormat=notification.contactFormat??'full';
-      if(changed&&!origin)await this.queueMessage(job.incident_id,notice,null,id,q,{broadcast:true,contacts:analysis.contacts,contactFormat});
+      if(['claude','codex'].includes(analysis.mode)&&analysis.teamsMessages!==undefined){
+        await queueModelMessages(this,q,{job,analysis,previous,changed,id,replies,notice,contactFormat});
+      }else if(changed&&!origin)await this.queueMessage(job.incident_id,notice,null,id,q,{broadcast:true,contacts:analysis.contacts,contactFormat});
       else {
         // Questions get a full answer only in their original conversation.
         // A changed judgment still informs peers. Coalesced alert replies are
@@ -408,17 +449,26 @@ export class SreStore {
         for(const room of targets)if((changed||room.id===origin||replies.has(room.id))&&room.incident_id===job.incident_id){const full=room.id===origin;await this.queueMessage(job.incident_id,full?analysis.text:notice,room.id,targets.length===1?id:id+':'+room.id,q,{contacts:analysis.contacts,contactFormat:full?'full':contactFormat});}
       }
       if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the investigation result');
+      if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(deadline<=await this.coordinationNow(q))throw new Error('Agent lease expired before committing the investigation result');}
       return analysis;
     });
   }
   async fail(job, error, maxAttempts = 3) {
     await this.db.transaction(async q=>{
-      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),['single-agent']);
+      await lockInvestigationScheduler(this,q);
+      const [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[investigatorLeaseName(job)]);
       const [current]=await q('SELECT status,lease_owner,lease_until FROM sre_jobs WHERE id=?'+(this.db.dialect==='postgres'?' FOR UPDATE':''),[job.id]);
       const now=await this.coordinationNow(q);
       if(!lease||lease.owner!==job.lease_owner||Number(lease.expires_at)<=now||!current||current.status!=='running'||current.lease_owner!==job.lease_owner||Number(current.lease_until)<=now)return;
+      if(error instanceof ModelQuotaError){
+        await holdModelQuota(this,q,job,error,now);
+        if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording model quota');
+        if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording model quota');}
+        return;
+      }
       await q("UPDATE sre_jobs SET status=?,error=?,next_at=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND status='running'",[job.attempts>=maxAttempts?'dead':'pending',redact(String(error.message || error)),now+Math.min(60000,1000*2**job.attempts),job.id,job.lease_owner]);
       if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording failure');
+      if(this.investigationConcurrency>1){await q('DELETE FROM sre_locks WHERE name=? AND owner=?',[investigatorLeaseName(job),job.lease_owner]);if(Math.min(Number(lease.expires_at),Number(current.lease_until))<=await this.coordinationNow(q))throw new Error('Job lease expired while recording failure');}
     });
   }
   async release(owner) { await this.db.query('DELETE FROM sre_locks WHERE owner=?', [owner]); }
@@ -467,7 +517,7 @@ export class SreStore {
       const conversation=await this.authorizeIncidentConversation(id,incidentId,q);
       if(conversation.incident_id&&conversation.incident_id!==incidentId)throw new Error('Use a separate thread/chat for each incident');
       const [count]=await q('SELECT COUNT(*) AS count FROM sre_conversations WHERE incident_id=? AND enabled=1',[incidentId]);
-      if(conversation.incident_id!==incidentId&&Number(count.count)>=8)throw new Error('Eight conversations already follow this incident. Use a shared incident thread to unify further teams.');
+      if(conversation.incident_id!==incidentId&&Number(count.count)>=incidentConversationLimit(this.services.find(s=>s.key===conversation.service_key)?.teams))throw new Error(incidentConversationLimit(this.services.find(s=>s.key===conversation.service_key)?.teams)===8?'Eight conversations already follow this incident. Use a shared incident thread to unify further teams.':'The configured incident conversation limit has been reached. Use a shared incident thread.');
       const bound=await q('UPDATE sre_conversations SET incident_id=? WHERE id=? AND (incident_id IS NULL OR incident_id=?) RETURNING id',[incidentId,id,incidentId]);
       if(!bound.length)throw new Error('Use a separate thread/chat for each incident');
       await q("UPDATE sre_outbox SET next_at=?,error=NULL WHERE incident_id=? AND conversation_key IS NULL AND status='pending' AND error=?",[await this.coordinationNow(q),incidentId,routeWaitReason]);
@@ -555,6 +605,6 @@ export class SreStore {
     }
     await projectDeliveryInspections(this,deliveryRows,deliveryRecords,restoreId);
     const enriched=new Map(deliveryRows.map(row=>[row.id,row]));
-    return {incidents:incidents.map(x=>({...x,analysis:parse(x.analysis)})),jobs,outbox:outbox.map(row=>enriched.get(row.id)),attentionOutbox:attentionOutbox.map(row=>enriched.get(row.id)),rollbacks:rollbacks.map(x=>({...x,proposal:parse(x.proposal)})),sessions,counts,workerConcurrency:1,deliveryInspectionVersion:1};
+    return {incidents:incidents.map(x=>({...x,analysis:parse(x.analysis)})),jobs,outbox:outbox.map(row=>enriched.get(row.id)),attentionOutbox:attentionOutbox.map(row=>enriched.get(row.id)),rollbacks:rollbacks.map(x=>({...x,proposal:parse(x.proposal)})),sessions,counts,workerConcurrency:this.investigationConcurrency,modelQuota:await this.modelQuota(),deliveryInspectionVersion:1};
   }
 }

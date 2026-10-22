@@ -60,7 +60,11 @@ export async function prepareRestore(store,{restoreId,backupSha256,backupAt,reas
     // evidence. Publication receipts are positive certainty and must reset.
     // Responder aliases describe restored conversations; they do not grant
     // membership, incident sharing, acknowledgement or action authority.
-    await q("DELETE FROM sre_checkpoints WHERE id NOT LIKE 'recovery:database-restore%' AND id NOT LIKE 'change-association:%' AND id NOT LIKE 'outbox-contact:%' AND id NOT LIKE 'contact-delivery:%' AND id NOT LIKE 'teams-delivery:%' AND id NOT LIKE 'coordination-attention-covered:%' AND id NOT LIKE 'teams-room-label:%'");
+    // The exact rehearsal checkpoint identifies its existing fictional dataset.
+    // It does not certify freshness or authorize resuming an incomplete setup.
+    // Queue service positions and bounded settling gates retain scheduling
+    // history; they provide no health, publication or action authority.
+    await q("DELETE FROM sre_checkpoints WHERE id NOT LIKE 'recovery:database-restore%' AND id NOT LIKE 'change-association:%' AND id NOT LIKE 'outbox-contact:%' AND id NOT LIKE 'contact-delivery:%' AND id NOT LIKE 'teams-delivery:%' AND id NOT LIKE 'coordination-attention-covered:%' AND id NOT LIKE 'teams-room-label:%' AND id NOT LIKE 'agent-message-last:%' AND id NOT LIKE 'agent-freshness-ready:%' AND id NOT LIKE 'agent-request-schedule:%' AND id NOT LIKE 'agent-scheduled:%' AND id NOT LIKE 'agent-room-scheduled:%' AND id NOT LIKE 'agent-model-quota:%' AND id NOT IN ('agent-scheduler-policy','agent-model-quota') AND id<>?",['rehearsal:multi-team:v1']);
     for(const incident of await q('SELECT id,updated_at,source_states FROM sre_incidents')) {
       const status=Object.values(JSON.parse(incident.source_states)).some(item=>item.status==='OPEN')?'open':'verifying';
       await q('UPDATE sre_incidents SET status=?,analysis=NULL,revision=revision+1,updated_at=? WHERE id=?',[status,Math.max(now,Number(incident.updated_at)),incident.id]);

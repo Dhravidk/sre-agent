@@ -201,10 +201,12 @@ With Node.js 24+, Git, and pnpm 11.25.0 installed through approved workstation t
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm sre:dev
+pnpm sre:lab
 ```
 
 Open `http://127.0.0.1:3001` and select a synthetic scenario. In another terminal, `pnpm sre:seed recent-regression` creates the same kind of fictional case. Use `pnpm sre:rehearsal` on port 3004 for the separate persisted multi-team walkthrough. These defaults need no vendor credentials or model inference.
+
+For actual Claude development, install/authenticate the approved Claude CLI and run `pnpm sre:dev` on port 3010. It starts without seeded incidents and has no rules fallback. See [Claude development](CLAUDE-AGENT-DEVELOPMENT.md) and [sustained group evaluation](SUSTAINED-GROUP-EVALUATION.md) for model-backed investigations and current capacity limits.
 
 For engineering changes run `pnpm test`. Its first-run fixture setup is included. The original auction website is a separate `pnpm dev` process on port 3000; the database-backed integration console is the port-3001 application described here.
 

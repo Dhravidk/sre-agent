@@ -117,7 +117,7 @@ GitHub/GitLab numeric pagination checks Link rel=next and GitLab x-next-page, in
 
 Verify actual units and selector behavior in the tenant. The threshold above is illustrative. Counts must be integers from 1–10; sample age/gap limits are 1–900 seconds. IDs are unique per service and invalid definitions fail at configuration load.
 
-The connected example sets explicit operational limits. Defaults are 180 seconds for startup grace, polling freshness, and tick/poll duration; 300 seconds for queue age; and 1800 seconds for independent rollback verification. When maxPollAgeSeconds is omitted, its default is at least three poll intervals. Operational time limits support 1–86400 seconds. Tune them from measured workload and provider behavior. `operations.notify:false` disables proactive notices while retaining the read-only report.
+The connected example sets explicit operational limits. Defaults are 180 seconds for startup grace, polling freshness, and tick/poll duration; 300 seconds for queue age; and 1800 seconds for independent rollback verification. A Claude/Codex investigation tick has an effective floor of the full worker budget plus ten seconds: 250 seconds for the default 180-second CLI timeout plus 60 seconds for collection/persistence. A larger configured tick threshold is preserved. Polling, command and delivery lanes keep their separate thresholds. When maxPollAgeSeconds is omitted, its default is at least three poll intervals. Operational time limits support 1–86400 seconds. Tune them from measured workload and provider behavior. `operations.notify:false` disables proactive notices while retaining the read-only report.
 
 ## Local evidence
 

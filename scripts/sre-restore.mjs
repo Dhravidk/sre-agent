@@ -38,7 +38,7 @@ if(action==='retry-scopes')console.log(JSON.stringify({networkCalls:0,providerVe
 else {
  const db=config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath);
  try {
-  const store=await new SreStore(db,{services:config.services}).initialize(),actor={kind:'local-operator',id:userInfo().username};
+  const store=await new SreStore(db,{services:config.services,investigationConcurrency:config.investigationConcurrency}).initialize(),actor={kind:'local-operator',id:userInfo().username};
   let result;
   if(action==='status')result=await store.restoreFence();
   if(action==='prepare') {

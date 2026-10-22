@@ -1,3 +1,4 @@
+import {agentInvestigationProperties,validateAgentInvestigation,issueSpecMarkdown,remediationText} from './agent-investigation.mjs';
 import { evidenceCapability, safeUrl } from './security.mjs';
 import { riskSchema,validateRisk,fixtureRisk } from './analytic-risk.mjs';
 import { boundedContext } from './model-context.mjs';
@@ -8,6 +9,7 @@ import {signalDigestText} from './signal-digest.mjs';
 export { boundedContext,modelContextLimits } from './model-context.mjs';
 
 export const investigationSchema={type:'object',additionalProperties:false,properties:{summary:{type:'string'},hypotheses:{type:'array',items:{type:'string'},maxItems:8},changeAssessment:{type:'string',enum:['likely','unlikely','unknown']},candidateSha:{type:['string','null']},evidenceIds:{type:'array',items:{type:'string'},maxItems:20},unknowns:{type:'array',items:{type:'string'},maxItems:10},nextSteps:{type:'array',items:{type:'string'},maxItems:10}},required:['summary','hypotheses','changeAssessment','candidateSha','evidenceIds','unknowns','nextSteps']};
+Object.assign(investigationSchema.properties,agentInvestigationProperties);
 investigationSchema.properties.risk=riskSchema;investigationSchema.required.push('risk');
 
 export function validateInvestigation(data,context) {
@@ -16,8 +18,10 @@ export function validateInvestigation(data,context) {
   for(const key of ['hypotheses','evidenceIds','unknowns','nextSteps'])if(!Array.isArray(data[key])||data[key].length>20||data[key].some(x=>typeof x!=='string'||x.length>4000))throw new Error('Invalid investigation '+key);
   if(data.evidenceIds.some(id=>!ids.has(id)))throw new Error('Investigation cited evidence outside this incident');
   if(data.candidateSha!==null&&!context.deployments.some(x=>x.sha===data.candidateSha&&x.at<=context.incident.started_at))throw new Error('Investigation cited an ineligible deployment');
+  if(data.candidateSha!==null&&data.changeAssessment!=='likely')throw new Error('A deployment candidate requires likely change attribution; source identity belongs in codeFindings');
+  validateAgentInvestigation(data,context);
   const risk=validateRisk(data.risk,context);
-  return {...data,risk,text:[context.incident.id+' — '+data.summary,'Outage outlook ('+(context.riskScope?.stage||'incident')+'): '+risk.likelihood+'. '+risk.likelihoodRationale,'Analytic confidence: '+risk.confidence+'. '+risk.confidenceRationale,'Evidence: '+data.evidenceIds.join(', '),'Change assessment: '+data.changeAssessment,...data.hypotheses.map(x=>'Hypothesis: '+x),...risk.assumptions.map(x=>'Assumption: '+x),...risk.alternatives.map(x=>'Alternative: '+x),...data.unknowns.map(x=>'Missing evidence: '+x),...risk.indicators.map(x=>'Monitor: '+x),...data.nextSteps.map(x=>'Next: '+x),'Judgment update: '+risk.changeExplanation,'Recovery: request a rollback assessment for this incident. Execution requires a fresh, compatible artifact and explicit operator approval.'].join('\n')};
+  return {...data,risk,text:[context.incident.id+' — '+data.summary,'Outage outlook ('+(context.riskScope?.stage||'incident')+'): '+risk.likelihood+'. '+risk.likelihoodRationale,'Analytic confidence: '+risk.confidence+'. '+risk.confidenceRationale,'Evidence: '+data.evidenceIds.join(', '),'Change assessment: '+data.changeAssessment,...data.hypotheses.map(x=>'Hypothesis: '+x),...risk.assumptions.map(x=>'Assumption: '+x),...risk.alternatives.map(x=>'Alternative: '+x),...data.unknowns.map(x=>'Missing evidence: '+x),...risk.indicators.map(x=>'Monitor: '+x),...data.nextSteps.map(x=>'Next: '+x),'Judgment update: '+risk.changeExplanation,'Recovery: request a rollback assessment for this incident. Execution requires a fresh, compatible artifact and explicit operator approval.'].join('\n')+(data.codeFindings?.length?'\nCandidate source locations (model hypotheses, not verified causality):\n'+data.codeFindings.map(f=>f.provider+' '+f.path+':'+f.lineStart+'–'+f.lineEnd+' @ '+f.sha+'; '+f.explanation+'; evidence '+f.evidenceId).join('\n'):'')+(data.remediation?'\n\n'+remediationText(data.remediation):'')+(data.issueSpec?'\n\n'+issueSpecMarkdown(data.issueSpec):'')};
 }
 
 export class RulesReasoner {
@@ -64,6 +68,6 @@ export class EveReasoner {
     try {result=await response.result();}
     catch(error) {await session.cancel().catch(()=>{});throw error;}
     if(result.status==='failed'||!result.data)throw new Error('The model investigation did not return a validated result');
-    return {analysis:{...validateInvestigation(result.data,context),mode:'eve'},remoteState:session.state};
+    return {analysis:{...validateInvestigation(result.data,{...context,coverage:modelContext.coverage,signalDigest:modelContext.signalDigest}),mode:'eve'},remoteState:session.state};
   }
 }

@@ -1,3 +1,4 @@
+import {readInvestigationLogs} from './dynatrace-log-investigation.mjs';
 import { ApiClient, tokenProvider, tokenAuth } from './http-client.mjs';
 import { assertText } from './security.mjs';
 import { githubDeploymentStatus, gitlabDeploymentStatus } from './deployments.mjs';
@@ -205,9 +206,10 @@ export class DynatraceConnector extends ApiClient {
     if(this.config.mode!=='classic'||!this.config.entityId)throw new Error('Classic metrics require an explicit service entity');
     return this.request('/api/v2/metrics/query?'+new URLSearchParams({metricSelector:selector,entitySelector:'entityId('+JSON.stringify(this.config.entityId)+')',from:iso(from),to:iso(to),resolution:'1m'}),{signal});
   }
-  async query(query,{from,to,signal}={}) {
+  async query(query,{from,to,signal,scanLimitGbytes=1,fetchTimeoutSeconds=30}={}) {
     if(this.config.mode!=='grail')throw new Error('Grail log queries require the Grail connector');
-    let result=await this.request('/platform/storage/query/v1/query:execute',{method:'POST',body:{query,defaultTimeframeStart:iso(from),defaultTimeframeEnd:iso(to),maxResultRecords:200,maxResultBytes:500000,requestTimeoutMilliseconds:1000,defaultScanLimitGbytes:1,fetchTimeoutSeconds:30,enforceQueryConsumptionLimit:true},signal});
+    if(!Number.isFinite(scanLimitGbytes)||scanLimitGbytes<=0||scanLimitGbytes>1||!Number.isFinite(fetchTimeoutSeconds)||fetchTimeoutSeconds<1||fetchTimeoutSeconds>30)throw Error('Invalid Dynatrace query budget');
+    let result=await this.request('/platform/storage/query/v1/query:execute',{method:'POST',body:{query,defaultTimeframeStart:iso(from),defaultTimeframeEnd:iso(to),maxResultRecords:200,maxResultBytes:500000,requestTimeoutMilliseconds:1000,defaultScanLimitGbytes:scanLimitGbytes,fetchTimeoutSeconds,defaultSamplingRatio:1},signal});
     for(let i=0;result.state!=='SUCCEEDED'&&i<30;i++) {
       if(!result.requestToken||['FAILED','CANCELLED'].includes(result.state))throw new Error('Dynatrace query failed');
       await this.sleep(250);
@@ -222,6 +224,7 @@ export class DynatraceConnector extends ApiClient {
     const partial=grail?.sampled===true||(grail?.notifications||[]).some(note=>note?.severity!=='INFO');
     return {records,metadata,complete:records.length<200&&!partial};
   }
+  investigationLogs(options){return readInvestigationLogs(this,options);}
   logs({from,to,signal}={}) {
     if(!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(this.config.logField||''))throw new Error('Configure a Dynatrace service log field');
     return this.query('fetch logs | filter '+this.config.logField+' == '+JSON.stringify(this.config.logValue)+' | sort timestamp desc | limit 200',{from,to,signal});

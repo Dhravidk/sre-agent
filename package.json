@@ -18,7 +18,7 @@
     "teams:live": "node --env-file-if-exists=.env apps/teams/server.mjs --live",
     "agent:dev": "eve dev",
     "agent:build": "eve build",
-    "sre:dev": "node --env-file-if-exists=.env src/sre/server.mjs",
+    "sre:dev": "node --env-file-if-exists=.env scripts/sre-agent.mjs",
     "sre:trial:demo": "node scripts/sre-trial-demo.mjs",
     "sre:rehearsal": "node scripts/sre-rehearsal.mjs",
     "sre:seed": "node --env-file-if-exists=.env scripts/sre-cli.mjs seed",
@@ -42,7 +42,12 @@
     "sre:ready": "node --env-file-if-exists=.env scripts/sre-readiness.mjs",
     "sre:health": "node --env-file-if-exists=.env scripts/sre-operations.mjs",
     "sre:retry": "node --env-file-if-exists=.env scripts/sre-retry.mjs",
-    "sre:teams:package": "node --env-file-if-exists=.env scripts/package-teams.mjs"
+    "sre:teams:package": "node --env-file-if-exists=.env scripts/package-teams.mjs",
+    "sre:lab": "node --env-file-if-exists=.env src/sre/server.mjs",
+    "sre:agent:eval": "node scripts/sre-agent-evaluate.mjs",
+    "sre:dynatrace:eval": "node scripts/sre-dynatrace-evaluate.mjs",
+    "sre:dynatrace:multi:eval": "node scripts/sre-dynatrace-multi-evaluate.mjs",
+    "sre:groups:eval": "node scripts/sre-group-burst-evaluate.mjs"
   },
   "dependencies": {
     "@microsoft/teams.apps": "2.1.1",

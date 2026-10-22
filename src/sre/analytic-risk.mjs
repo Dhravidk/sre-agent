@@ -1,10 +1,11 @@
+import {incompleteEvidence} from './evidence-completeness.mjs';
 export const likelihoodTerms=['unknown','almost no chance','very unlikely','unlikely','roughly even chance','likely','very likely','almost certain'];
 export const riskSchema={type:'object',additionalProperties:false,properties:{likelihood:{type:'string',enum:likelihoodTerms},likelihoodRationale:{type:'string'},confidence:{type:'string',enum:['low','moderate','high']},confidenceRationale:{type:'string'},impact:{type:'string'},assumptions:{type:'array',items:{type:'string'},maxItems:8},alternatives:{type:'array',items:{type:'string'},minItems:1,maxItems:8},contraryEvidenceIds:{type:'array',items:{type:'string'},maxItems:20},sourceQuality:{type:'array',items:{type:'object',additionalProperties:false,properties:{evidenceId:{type:'string'},limitations:{type:'string'}},required:['evidenceId','limitations']},maxItems:20},indicators:{type:'array',items:{type:'string'},minItems:1,maxItems:10},changeExplanation:{type:'string'}},required:['likelihood','likelihoodRationale','confidence','confidenceRationale','impact','assumptions','alternatives','contraryEvidenceIds','sourceQuality','indicators','changeExplanation']};
 
 export function riskScope(context,service,now=Date.now()) {
   const review=context.evidence.filter(e=>e.kind==='problem'&&e.content?.reviewOnly).sort((a,b)=>Number(b.observed_at)-Number(a.observed_at))[0];
   const stage=review?.content.stage||'incident';
-  return {framework:'icd203-sre-v1',stage,provider:review?.source||service.rollback?.provider||null,changeNumber:review?.content.number||null,headSha:review?.content.sha||null,mergedSha:review?.content.mergedSha||null,environment:service.environment,asOf:new Date(now).toISOString(),horizonHours:stage==='incident'?1:24,event:stage==='incident'?'Further service degradation or auction correctness failure during the next hour. Existing incident symptoms are observations.':'Service SLO breach or auction correctness failure within 24 hours if this reviewed change is deployed to the configured environment.',calibration:'Uncalibrated analytical judgment; no measured failure rate is asserted.'};
+  return {framework:'icd203-sre-v1',stage,provider:review?.source||service.rollback?.provider||null,changeNumber:review?.content.number||null,headSha:review?.content.sha||null,mergedSha:review?.content.mergedSha||null,environment:service.environment,asOf:new Date(now).toISOString(),horizonHours:stage==='incident'?1:24,event:stage==='incident'?'Further service degradation or failure of the service business invariants during the next hour. Existing incident symptoms are observations.':'Service SLO breach or failure of the service business invariants within 24 hours if this reviewed change is deployed to the configured environment.',calibration:'Uncalibrated analytical judgment; no measured failure rate is asserted.'};
 }
 
 export function validateRisk(risk,context) {
@@ -16,7 +17,7 @@ export function validateRisk(risk,context) {
   if(risk.contraryEvidenceIds.some(x=>!ids.has(x)))throw new Error('Contrary evidence is outside this incident');
   if(!Array.isArray(risk.sourceQuality)||risk.sourceQuality.length>20||risk.sourceQuality.some(x=>!ids.has(x.evidenceId)||typeof x.limitations!=='string'||!x.limitations.trim()||x.limitations.length>4000))throw new Error('Invalid source quality evidence');
   if(risk.likelihood!=='unknown'&&!risk.sourceQuality.length)throw new Error('A likelihood estimate requires an evidence quality assessment');
-  if(risk.confidence==='high'&&(risk.likelihood==='unknown'||context.evidence.some(x=>x.kind==='connector_error'||x.content?.complete===false||x.content?.policySources?.complete===false)))throw new Error('High confidence is unsupported with unknown likelihood, connector failures, or incomplete source comparisons');
+  if(risk.confidence==='high'&&(risk.likelihood==='unknown'||incompleteEvidence(context)))throw new Error('High confidence is unsupported with unknown likelihood or incomplete evidence coverage');
   return {...risk,scope:context.riskScope};
 }
 

@@ -25,7 +25,8 @@ Be skeptical, double-check claims, and distinguish observed behavior from assump
 
 ```sh
 pnpm test                         # Entire existing test suite; no live vendor acceptance
-pnpm sre:dev                      # Offline integration service, http://127.0.0.1:3001
+pnpm sre:dev                      # Actual Claude development, http://127.0.0.1:3010
+pnpm sre:lab                      # Offline rules fixture console, http://127.0.0.1:3001
 pnpm sre:seed recent-regression   # Synthetic incident; requires the service
 pnpm sre:rehearsal                # Separate offline multi-team rehearsal, port 3004
 pnpm sre:ready --json             # Configuration inventory; zero network calls

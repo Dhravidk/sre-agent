@@ -11,6 +11,9 @@ import { providerRetryGate } from './provider-retry.mjs';
 import { RulesReasoner, EveReasoner, boundedContext } from './reasoner.mjs';
 import { ClaudeReasoner } from './claude-reasoner.mjs';
 import { IncidentWorker } from './worker.mjs';
+import {investigationTimeBudgetMs} from './investigation-budget.mjs';
+import {questionBatchLimits} from './question-batch-budget.mjs';
+import {InvestigationPool} from './investigation-pool.mjs';
 import { Rollbacks, assessRollback } from './rollback.mjs';
 import { TeamsRouter, TeamsOutbox, startSreTeams,incidentConversation } from './teams.mjs';
 import { ConnectorPoller } from './poller.mjs';
@@ -20,7 +23,7 @@ import { seedDemo, devActivity } from './demo.mjs';
 import { riskScope } from './analytic-risk.mjs';
 import { OperationalMonitor,connectionReadHealth } from './operations.mjs';
 import { isSimulationMode } from './runtime-mode.mjs';
-import { IncidentCollaboration,roomScope } from './collaboration.mjs';
+import { IncidentCollaboration,roomScope,conversationDisplayName } from './collaboration.mjs';
 import {Casework} from './casework.mjs';
 import {normalizeAlert} from './alert-intake.mjs';
 import {LogDetector} from './log-detection.mjs';
@@ -37,14 +40,15 @@ const bearer=(req)=>String(req.headers.authorization||'').replace(/^Bearer /,'')
 
 export async function createSreRuntime({config=loadConfig(),db,connectors,reasoner,sender,qaAdapter,deliveryOptions,autoStart=true}={}) {
   const simulation=isSimulationMode(config.mode);
-  const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services}).initialize();
+  const store=await new SreStore(db||(config.databaseUrl?await postgresDatabase(config.databaseUrl):sqliteDatabase(config.sqlitePath)),{simulation,services:config.services,questionBatchLimit:config.agentMode==='claude'?questionBatchLimits.requests:1,investigationConcurrency:config.investigationConcurrency??1}).initialize();
   const secret=config.capabilitySecret||randomBytes(32).toString('hex');
   connectors ||= new Map(config.services.map(service=>[service.key,simulation?{}:createConnectors(service,{env:config.env,clock:()=>store.coordinationNow(),retryGateFactory:descriptor=>providerRetryGate(store,descriptor)})]));
   reasoner ||= config.agentMode==='claude'?new ClaudeReasoner({config,env:config.env}):config.agentMode==='eve'?new EveReasoner({host:config.env.EVE_URL,token:config.env.EVE_TOKEN,capabilitySecret:secret}):new RulesReasoner();
   const casework=new Casework({store,services:config.services,qaAdapter});
   const inspections=new DeliveryInspections({store,services:config.services});
   const logDetector=new LogDetector({store,services:config.services});
-  const worker=new IncidentWorker({store,services:config.services,connectors,reasoner,casework,restoreReadOnly:config.agentMode==='rules'});
+  const Worker=store.investigationConcurrency>1?InvestigationPool:IncidentWorker;
+  const worker=new Worker({store,services:config.services,connectors,reasoner,casework,restoreReadOnly:config.agentMode==='rules'});
   const rollbacks=new Rollbacks({store,services:config.services,connectors,mode:config.mode});
   const coordination=new IncidentCollaboration({store,services:config.services});
   const router=new TeamsRouter({store,services:config.services,rollbacks,coordination,casework,mode:simulation?'playground':'live'});
@@ -54,7 +58,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
     bridge=await startSreTeams({router,store,mode:config.teamsMode,env:config.env,host:config.host,port:Number(config.env.TEAMS_PORT||3978)});sender=bridge.sender;
   }
   const outbox=new TeamsOutbox({store,services:config.services,sender,casework,...deliveryOptions});
-  const operations=new OperationalMonitor({store,config,poller,outbox,schedulerEnabled:autoStart});
+  const operations=new OperationalMonitor({store,config,poller,outbox,schedulerEnabled:autoStart,investigationBudgetMs:['claude','codex'].includes(reasoner.mode)?investigationTimeBudgetMs(reasoner):0});
   const activeDeliveries=new Set();let deliveryError;
   let activeTick,activePoll,activeCommands,closePromise;let stopped=false;
   // A slow read-only model turn must not delay durable command acknowledgements.
@@ -71,12 +75,13 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
   }
   function tick() {
     if(stopped)return Promise.resolve();
+    if(activeTick)worker.wake?.();
     if(activeTick)return activeTick;
     activeTick=(async()=>{
       operations.begin('tick');let error;
       try {
       await commands();
-      await logDetector.runOnce();await worker.runOnce();await casework.runOnce();await rollbacks.recoverInterrupted();await rollbacks.executeNext();await commands();
+      await logDetector.runOnce();await worker.runOnce();if(stopped)return;await casework.runOnce();await rollbacks.recoverInterrupted();await rollbacks.executeNext();await commands();
       } catch(caught){error=caught;throw caught;}
       finally {operations.end('tick',error);}
     })().finally(()=>{activeTick=undefined;});
@@ -118,7 +123,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         const html=await readFile(new URL('../sre-web/index.html',import.meta.url));
         res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'"});return res.end(html);
       }
-      if(req.method==='GET'&&['/app.js','/incident-view.js','/delivery-inspection.js','/style.css'].includes(path)) {
+      if(req.method==='GET'&&['/app.js','/incident-view.js','/conversation-history.js','/delivery-inspection.js','/style.css'].includes(path)) {
         const asset=await readFile(new URL('../sre-web'+path,import.meta.url));
         res.writeHead(200,{'content-type':path.endsWith('.js')?'text/javascript':'text/css','x-content-type-options':'nosniff'});return res.end(asset);
       }
@@ -159,6 +164,11 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         if(req.headers['sec-fetch-site']==='cross-site')throw fail(403,'Cross-site access denied');
       } else if(!equalSecret(bearer(req),config.apiToken))throw fail(401,'SRE API token required');
       if(req.method==='GET'&&path==='/api/operations')return send(200,await operations.snapshot());
+      if(req.method==='GET'&&path==='/api/agent/quota')return send(200,await store.modelQuota());
+      if(req.method==='POST'&&path==='/api/agent/quota/resume'){
+        const input=decode(await body(req));
+        return send(200,await store.resumeModelQuota({holdId:input.holdId,reason:input.reason,actor:{kind:simulation?'local-operator':'operator-api',id:simulation?'loopback operator':'SRE_API_TOKEN'}}));
+      }
       const inspectionRoute=path.match(/^\/api\/deliveries\/([^/]+)\/inspection$/);
       if(inspectionRoute){
         let id;try{id=decodeURIComponent(inspectionRoute[1]);}catch{throw fail(400,'Invalid delivery identity');}
@@ -175,8 +185,8 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         const connections=config.services.flatMap(service=>connectionSources.map(source=>({service:service.key,source,enabled:Boolean(service[source]?.enabled),...(source==='servicenow'?{transport:simulation&&config.simulationMcp?'mcp-mock':service.servicenow?.transport||'rest'}:{}),checkpoint:checkpoints.find(x=>x.id===source+':'+service.key)?.value||null})));
         for(const connection of connections)connection.health=connectionReadHealth(connection,operationReport);
         const simulationConversations=simulation?config.services[0].teams.conversations.map(id=>({id,name:roomScope(config.services[0],id).name})):[];
-        const conversations=await store.db.query('SELECT id,tenant_id,conversation_id,service_key,incident_id,enabled FROM sre_conversations');
-        return send(200,{...snapshot,operations:operationReport,connections,conversations:conversations.map(room=>({...room,name:roomScope(config.services.find(service=>service.key===room.service_key)||config.services[0],room.conversation_id).name})),mode:config.mode,agentMode:config.agentMode,teamsMode:config.teamsMode,services:config.services.map(s=>({key:s.key,name:s.name,environment:s.environment})),simulation,simulationGuide:simulation?config.simulationGuide||null:null,simulationConversations,simulationConversationId:simulation?config.services[0].teams.conversations[0]:null});
+        const conversations=await store.db.query("SELECT c.id,c.tenant_id,c.conversation_id,c.service_key,c.incident_id,c.enabled,c.reference,label.value AS room_label FROM sre_conversations c LEFT JOIN sre_checkpoints label ON label.id='teams-room-label:'||c.id");
+        return send(200,{...snapshot,operations:operationReport,connections,conversations:conversations.map(({reference,room_label,...room})=>({...room,name:conversationDisplayName(config.services.find(service=>service.key===room.service_key),{...room,reference},room_label)})),mode:config.mode,agentMode:config.agentMode,agentDevelopment:config.agentDevelopment===true,teamsMode:config.teamsMode,services:config.services.map(s=>({key:s.key,name:s.name,environment:s.environment})),simulation,simulationGuide:simulation?config.simulationGuide||null:null,simulationConversations,simulationConversationId:simulation?config.services[0].teams.conversations[0]:null});
       }
       const incidentRoute=path.match(/^\/api\/incidents\/(inc_[a-f0-9]+)(\/questions)?$/);
       if(incidentRoute) {
@@ -218,6 +228,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
         return send(202,await store.retryInvestigation({serviceKey:service.key,incidentId:context.incident.id,jobId:retryRoute[2],requestId:input.requestId,reason:input.reason,actor:{kind:simulation?'local-operator':'operator-api',id:simulation?'loopback operator':'SRE_API_TOKEN'}}));
       }
       if(simulation&&req.method==='POST'&&path==='/api/dev/seed') {
+        if(config.agentDevelopment)throw fail(403,'Legacy auction seeding is disabled for Claude development. Supply investigation evidence explicitly.');
         const input=decode(await body(req));return send(202,await seedDemo(store,config.services[0],input.scenario));
       }
       if(simulation&&req.method==='POST'&&path==='/api/dev/teams') {
@@ -239,7 +250,7 @@ export async function createSreRuntime({config=loadConfig(),db,connectors,reason
   server.requestTimeout=30000;server.headersTimeout=10000;
   return {server,store,worker,rollbacks,router,outbox,coordination,casework,inspections,logDetector,poller,operations,tick,poll,commands,deliver,config,teamsAddress:bridge?.server.address(),close(){
     if(!closePromise) {
-      stopped=true;clearInterval(interval);clearInterval(pollInterval);clearInterval(observeInterval);clearInterval(commandInterval);clearInterval(deliveryInterval);operations.stop();
+      stopped=true;worker.stop();clearInterval(interval);clearInterval(pollInterval);clearInterval(observeInterval);clearInterval(commandInterval);clearInterval(deliveryInterval);operations.stop();
       closePromise=(async()=>{
         if(server.listening)await new Promise(r=>server.close(r));
         await outbox.close();
