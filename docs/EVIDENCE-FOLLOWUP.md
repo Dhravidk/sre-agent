@@ -20,7 +20,9 @@ The reasoner may return an optional `evidenceRequests` array of at most two exac
 {"kind":"dynatrace_logs","from":1792641600000,"to":1792641660000,"reason":"Inspect the earlier error window."}
 ```
 
-Examples are illustrative, not Ally mappings or valid permissions. Syntax is strict: no project, endpoint, raw query, service, command, credential or action field is allowed. The host fixes the project/service and independently validates each selector. A changed configuration requires ordinary reviewed setup; source or responder text cannot enable a reader.
+An optional `filters:[{"field":"http.route","value":"/api/requests"}]` can narrow a diagnostic read when the host supplies `evidenceAcquisition.logs.filters`. Only its delivered exact field/value pairs are eligible; up to three matches are ANDed within the fixed service/environment. Filtered old/new selections keep distinct retained histories. A custom window-only reader cannot accept them. [Diagnosis milestone](DYNATRACE-GITLAB-DIAGNOSIS.md) describes validation, coverage and evaluation limits.
+
+Examples are illustrative, not Ally mappings or valid permissions. Syntax is strict: no endpoint, raw query, service, environment, command, credential or action field is allowed. An explicit project on a source request requires the separately delivered candidate allowlist described below. The host fixes the service and independently validates each selector. A changed configuration requires ordinary reviewed setup; source or responder text cannot enable a reader.
 
 GitLab requests require enabled [source inspection](SOURCE-REFERENCES.md), a safe text path and a full immutable SHA actually delivered from scoped GitLab source, comparison or deployment evidence. Another provider's deployment cannot supply that authority. Each requested range is at most 80 lines, with integer endpoints from 1 to 1,000,000. It uses the same initial-collection cache and budget: eight file reads, 64,000 accepted bytes in total and 16,000 bytes per file. A follow-up does not replenish that budget. Full retained bytes remain subject to the existing source identity, redaction and excerpt validation.
 

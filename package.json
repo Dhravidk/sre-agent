@@ -51,6 +51,7 @@
     "sre:agent:eval": "node scripts/sre-agent-evaluate.mjs",
     "sre:dynatrace:eval": "node scripts/sre-dynatrace-evaluate.mjs",
     "sre:dynatrace:multi:eval": "node scripts/sre-dynatrace-multi-evaluate.mjs",
+    "sre:diagnosis:eval": "node scripts/sre-diagnosis-evaluate.mjs",
     "sre:groups:eval": "node scripts/sre-group-burst-evaluate.mjs"
   },
   "dependencies": {

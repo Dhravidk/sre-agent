@@ -132,8 +132,16 @@ test('Codex strict request unions preserve exclusive kinds and nullable optional
   const request=schema.properties.evidenceRequests,check=new Ajv({strict:false}).compile(request),base={sha:'a'.repeat(40),path:'src/ledger/retry.py',reason:'Inspect an immutable helper.'};
   assert.equal(check([{...base,kind:'gitlab_file',project:null,startLine:1,endLine:2}]),true);
   assert.equal(check([{...base,kind:'gitlab_tree',project:'approved/project'}]),true);
-  assert.equal(check([{kind:'dynatrace_logs',from:1,to:2,reason:'Compare an earlier window.'}]),true);
-  for(const invalid of [{...base,kind:'gitlab_file',startLine:1,endLine:2},{...base,kind:'gitlab_tree',project:null,startLine:1,endLine:2},{kind:'dynatrace_logs',project:null,from:1,to:2,reason:'Invalid project field.'}])assert.equal(check([invalid]),false);
+  assert.equal(check([{kind:'dynatrace_logs',from:1,to:2,filters:null,reason:'Compare an earlier window.'}]),true);
+  assert.equal(check([{kind:'dynatrace_logs',from:1,to:2,filters:[{field:'http.route',value:'/api/requests'}],reason:'Inspect this exact operation.'}]),true);
+  for(const invalid of [{...base,kind:'gitlab_file',startLine:1,endLine:2},{...base,kind:'gitlab_tree',project:null,startLine:1,endLine:2},{kind:'dynatrace_logs',project:null,from:1,to:2,reason:'Invalid project field.'},{kind:'dynatrace_logs',from:1,to:2,filters:[{field:'service.name',value:'foreign'}],reason:'Invalid scope selector.'}])assert.equal(check([invalid]),false);
+});
+
+test('Codex nullable log filters restore legacy omission while exact selections survive host validation',async()=>{
+ for(const filters of [null,[{field:'http.route',value:'/api/requests'}]]){
+  const data=assessment();data.evidenceRequests=[{kind:'dynatrace_logs',from:1,to:2,filters,reason:'Inspect the exact operation.'}];const f=await fixture(output(events(data))),c=context();c.evidenceAcquisition={enabled:true};
+  try{const request=(await f.reasoner.investigate(c)).analysis.evidenceRequests[0];assert.equal(Object.hasOwn(request,'filters'),filters!==null);if(filters)assert.deepEqual(request.filters,filters);}finally{await f.close();}
+ }
 });
 
 test('Codex null project selection restores omission while explicit projects and invalid selectors reach host validation',async()=>{

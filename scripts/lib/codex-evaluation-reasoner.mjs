@@ -31,7 +31,7 @@ export function codexEvaluationSchema(snapshot){
   // subset accepts anyOf rather than oneOf, with every property required.
   const requests=schema.properties.evidenceRequests.items;
   requests.anyOf=requests.oneOf;delete requests.oneOf;
-  for(const variant of requests.anyOf)if(variant.properties.project)variant.properties.project.type=['string','null'];
+  for(const variant of requests.anyOf){if(variant.properties.project)variant.properties.project.type=['string','null'];if(variant.properties.filters)variant.properties.filters.type=['array','null'];}
   const strict=node=>{
     if(!node||typeof node!=='object')return;
     if(Object.hasOwn(node,'const')){node.type=typeof node.const;node.enum=[node.const];delete node.const;}
@@ -138,6 +138,7 @@ export class CodexEvaluationReasoner {
       // Null means the optional fixed-project selector was omitted. Explicit
       // project strings remain intact for the host's separate allowlist check.
       for(const request of Array.isArray(data.evidenceRequests)?data.evidenceRequests:[])if(['gitlab_file','gitlab_tree'].includes(request?.kind)&&request.project===null)delete request.project;
+      for(const request of Array.isArray(data.evidenceRequests)?data.evidenceRequests:[])if(request?.kind==='dynatrace_logs'&&request.filters===null)delete request.filters;
       if(typeof data.summary!=='string'||!data.summary.trim()||[...data.summary].length>600)throw Error('Codex investigation summary must contain 1 to 600 characters');
       const analysis={...validateInvestigation(data,context,{deliveredContext:snapshot}),mode:'codex'};
       return {analysis,remoteState:{provider:'codex-cli',invocationId,phase:'completed',transcriptPersistence:false,requestedModel:model,cliVersion:evaluationCliVersion,usage:result.usage,transport:{...result.transport,inputHash:hash(input),inputBytes:Buffer.byteLength(input),snapshotBytes:Buffer.byteLength(JSON.stringify(wire)),schemaBytes:Buffer.byteLength(JSON.stringify(schema))}}};

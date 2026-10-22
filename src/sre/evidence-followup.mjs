@@ -7,6 +7,7 @@ import {boundedContext} from './model-context.mjs';
 import {sourceScopeForService,sourceTextPath,readImmutableSource,sourceReadBudget,sourceInspectionLimits} from './source-evidence.mjs';
 import {collectLogSourceEvidence} from './log-source.mjs';
 import {evidenceReadLimits,validateEvidenceRequests} from './evidence-request.mjs';
+import {observedDiagnosticLogFilters} from './diagnostic-log-query.mjs';
 
 const fullSha=value=>typeof value==='string'&&/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
 const semantic=request=>Object.fromEntries(Object.entries(request).filter(([key])=>key!=='reason'));
@@ -28,14 +29,16 @@ export class EvidenceFollowup {
   const enabled=this.service.investigation?.followUp?.enabled===true&&!context.recoveryFence?.active,kinds=[];
   if(enabled&&(scope?.project&&typeof this.clients.gitlab?.file==='function'&&revisions.length||additionalProjects.length&&typeof this.clients.gitlab?.discoveryFile==='function'))kinds.push('gitlab_file');
   if(enabled&&(scope?.project&&typeof this.clients.gitlab?.directory==='function'&&revisions.length||additionalProjects.length&&typeof this.clients.gitlab?.discoveryDirectory==='function'))kinds.push('gitlab_tree');
-  if(enabled&&typeof logs?.logs==='function'&&Number.isSafeInteger(started)&&started>=0&&started-evidenceReadLimits.logWindowMs<=now)kinds.push('dynatrace_logs');
+  if(enabled&&(typeof logs?.logs==='function'||typeof logs?.diagnosticLogs==='function')&&Number.isSafeInteger(started)&&started>=0&&started-evidenceReadLimits.logWindowMs<=now)kinds.push('dynatrace_logs');
   const policy={version:1,enabled,round,remainingRounds:Math.max(0,evidenceReadLimits.rounds-round),remainingRequests:Math.max(0,evidenceReadLimits.requests-this.used),remainingLogQueries:Math.max(0,evidenceReadLimits.logQueries-this.logQueries),kinds,source:scope?{project:scope.project,allowedRevisions:scope.project?revisions:[],...(additionalProjects.length?{additionalProjects}:{}),maxLines:evidenceReadLimits.sourceLines,...(kinds.includes('gitlab_tree')?{directory:{recursive:false,maxEntries:sourceInventoryLimits.pages*sourceInventoryLimits.pageSize,maxPages:sourceInventoryLimits.pages}}:{})}:null,logs:{earliestFrom:Math.max(0,started-evidenceReadLimits.logWindowMs),latestTo:now,maxWindowMs:evidenceReadLimits.logWindowMs},note:'These are host read constraints, not credentials or action authority. Only the configured fixed project or explicitly listed additional project/revision pairs and service are accessible. Additional projects remain runtime mapping candidates. Omitted evidence and failed/partial reads stay unknown.'};
+  if(kinds.includes('dynatrace_logs')&&typeof logs.diagnosticLogs==='function')policy.logs.filters={maxFilters:3,fields:observedDiagnosticLogFilters(view),note:'Optional ANDed exact selectors from these delivered values only. They narrow the fixed service/environment, never broaden access. A filtered complete result covers only that selection, not the incident.'};
   this.policies??=new Map();this.policies.set(round,structuredClone(policy));return policy;
  }
  refusal(request,policy){
   if(!policy.enabled||!policy.kinds.includes(request.kind))return'This follow-up reader is not enabled within the configured scope';
   if(['gitlab_file','gitlab_tree'].includes(request.kind)&&(!fullSha(request.sha)||!(request.project?policy.source?.additionalProjects?.find(item=>item.project===request.project)?.allowedRevisions.includes(request.sha):policy.source?.project&&policy.source.allowedRevisions.includes(request.sha))||(request.kind==='gitlab_tree'?!sourceDirectoryPath(request.path):!sourceTextPath(request.path)||request.endLine<request.startLine||request.endLine-request.startLine+1>evidenceReadLimits.sourceLines)))return'The source selector is outside the delivered immutable revisions, safe text paths or line budget';
   if(request.kind==='dynatrace_logs'&&(request.from<policy.logs.earliestFrom||request.to>policy.logs.latestTo||request.to<=request.from||request.to-request.from>policy.logs.maxWindowMs))return'The log request is outside the permitted incident time window';
+  if(request.kind==='dynatrace_logs'&&request.filters?.some(({field,value})=>!policy.logs.filters?.fields.some(item=>item.field===field&&item.values.includes(value))))return'The diagnostic log selector was not delivered within the permitted filter values';
   return null;
  }
  async run(requests,context,round,{limited=false}={}){
@@ -64,9 +67,11 @@ export class EvidenceFollowup {
      coverage={fileComplete:true,complete:request.endLine<=file.lineCount,requestedLines:request.endLine-request.startLine+1,linesAvailable:Math.max(0,Math.min(file.lineCount,request.endLine)-request.startLine+1)};
      artifact={source:'gitlab',kind:'source_requested',content:{requestedSource:{version:1,project,...(request.project?{discoveryScopeKey:discoveryScope(this.service).scopeKey}:{}),requestId:start.eventId,jobId:this.job.id,attempt:this.job.attempts,request,file:{...file,ranges:[{startLine:request.startLine,endLine:request.endLine}]},interpretation:'Host-retrieved immutable source for a bounded follow-up proposal. This does not attest deployment, cause, approval or recovery.'}}};
     }else{
-     this.logQueries++;content=await this.logs.logs({from:request.from,to:request.to,signal:this.signal});
+     this.logQueries++;const options={from:request.from,to:request.to,environment:this.service.environment,filters:request.filters||[],signal:this.signal};
+     content=typeof this.logs.diagnosticLogs==='function'?await this.logs.diagnosticLogs(options):await this.logs.logs({from:request.from,to:request.to,signal:this.signal});
      if(!content||!Array.isArray(content.records)||typeof content.complete!=='boolean'||content.records.length>evidenceReadLimits.logRecords||Buffer.byteLength(JSON.stringify(content),'utf8')>evidenceReadLimits.logBytes)throw Error('Follow-up log response exceeds the accepted shape or byte budget');
-     coverage=logReadCoverage(content,request);artifact={source:'dynatrace',kind:'logs',content:{...content,complete:coverage.complete,followUp:{requestId:start.eventId,jobId:this.job.id,attempt:this.job.attempts,round,from:request.from,to:request.to,sourceComplete:content.complete,coverage}}};
+     if(request.filters?.length&&content.records.some(record=>request.filters.some(({field,value})=>record?.[field]!==value)))throw Error('Follow-up log response is outside the requested filter scope');
+     coverage=logReadCoverage(content,request);artifact={source:'dynatrace',kind:'logs',content:{...content,complete:coverage.complete,followUp:{requestId:start.eventId,jobId:this.job.id,attempt:this.job.attempts,round,from:request.from,to:request.to,...(request.filters?.length?{filters:request.filters}:{}),sourceComplete:content.complete,coverage}}};
     }
    }catch(failure){if(this.signal?.aborted)throw this.signal.reason;error=redact(String(failure.message)).slice(0,500);}
    if(this.signal?.aborted)throw this.signal.reason;

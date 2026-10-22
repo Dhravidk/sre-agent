@@ -1,4 +1,5 @@
 import {readInvestigationLogs} from './dynatrace-log-investigation.mjs';
+import {readDiagnosticLogs} from './diagnostic-log-query.mjs';
 import {sourceDirectoryPath,validatedSourceInventory,sourceInventoryLimits} from './source-inventory.mjs';
 import { ApiClient, tokenProvider, tokenAuth } from './http-client.mjs';
 import { assertText } from './security.mjs';
@@ -262,6 +263,7 @@ export class DynatraceConnector extends ApiClient {
     return {records,metadata,complete:records.length<200&&!partial};
   }
   investigationLogs(options){return readInvestigationLogs(this,options);}
+  diagnosticLogs(options){return readDiagnosticLogs(this,options);}
   logs({from,to,signal}={}) {
     if(!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(this.config.logField||''))throw new Error('Configure a Dynatrace service log field');
     return this.query('fetch logs | filter '+this.config.logField+' == '+JSON.stringify(this.config.logValue)+' | sort timestamp desc | limit 200',{from,to,signal});
