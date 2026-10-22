@@ -204,3 +204,24 @@ Three matched pairs on retained authored snapshots used code checkpoint `5552681
 The observed call reductions were 14–21%, with 20–31% fewer input tokens. Pair order alternated; three pairs do not establish a production distribution, and host/provider load was uncontrolled. The temporary replay recorder initially compared the pre-projection retained snapshot with adapter stdin. Its original errors/log remain retained; rebuilding the exact bounded projection verified every alias input hash and revalidated the saved outputs without fresh inference or changed answers. The concurrent harness records directly from the worker context and checks its own exact input hash.
 
 The shared prompt now targets roughly 450 words with separate purposes for each section and distinct coordination messages. Required sections, negative/control tests, source locations, coverage limits, counterevidence and recovery blockers remain in the contract. Direct-request fallbacks retain the full assessment, including source findings, remediation and the issue specification; previously the fallback used the abbreviated proactive brief. SQLite/PGlite tests cover zero/four custom selections, complete fallback text, scoped publication, revoked rooms and restart/deduplication. No scheduler order, investigator capacity, stale-publication fence or diagnosis/recovery oracle was weakened.
+
+The final full suite passed **1,476 tests**, zero failures/skips. All **257** runtime/configuration/script/fixture/test/package hashes matched from that frozen suite through native completion and drained reopen. A fresh expanded run on code checkpoint `a838da3` used official **Codex CLI 0.163.0-alpha.10.2**, requested **gpt-6.1-sol / medium**, and the pinned alias protocol/prompt hash. All **41/41 native investigations** passed every strict file/SHA/line, deployment attribution, recovery/target, citation and issue-specification check; all **20 final cases** were current and passed. Every recorded wire hash matched delivered stdin, and immutable source payloads matched their canonical recordings.
+
+The workload retained **4,744 messages**, deduplicated **136 replays**, and drained **4,764 jobs** (39 done, 4,725 superseded). All **64 questions** have exact matching scoped assessment/reply bindings; all 64 used the complete fallback assessment, independently checked against the stored analysis, source paths and issue title. The 64 outbox messages remain pending. No sender or deployment writer ran. The same 477,772 authored record entries, 16 source scopes, four copies of five decision classes, 64 groups, 72 fixed-cadence bursts and four investigators remained in use.
+
+| Observation | Prior byte-bounded run (`e4507c4`) | Latest run (`a838da3`) |
+| --- | ---: | ---: |
+| Native investigations | 40 | 41 |
+| Other 19 incidents publication p95 (38 questions) | 6.38 min | **2.76 min** |
+| Question-to-publication p50 | 5.65 min | **2.50 min** |
+| Question-to-publication p95 | 10.07 min | **6.92 min** |
+| Dominant incident p95 (26 questions) | 10.20 min | **7.05 min** |
+| Median native call | 57.63 s | **37.83 s** |
+| Median native input tokens | 39,617 | 32,042 |
+| Median native output tokens | 2,117.5 | 1,373 |
+
+Quieter-incident maximum was **2.83 minutes**, and its p95 also improved on the earlier eight-request run's **4.85 minutes**. Overall question-to-queued-reply p95 was **6.92 minutes**, maximum **7.05 minutes**. Local admitted-message/store p95 was **0.47 ms**, maximum **6.70 ms**; bursts spanned **284.03 seconds**. The largest batch contained **26 requests / 9,621 bytes**. These are observed finite-workload results with different timing, snapshot identities and cache/load; they do not establish a production SLO or a controlled sustained speedup ratio. The matched citation-only pairs above are a separate, small comparison.
+
+Database-wide capacity/peer exclusion, incident first-pass fairness, quieter publication during the flood, request count/bytes, room scope and controlled restart passed. Two hot-incident drafts were stale and could not publish; the original question batch survived for its final review. Drained reopen made **zero new model calls** and preserved the checked incidents/revisions/analyses, jobs/payloads/attempts, assessments, scheduler/quota/room/message checkpoints and outbox. Exact source/test manifests, original failures, native input/output and wire receipts, SQL-derived latency/content checks and restart receipts remain private under `.local/latency-improvement/`.
+
+This turn used Codex as requested while Claude was capped; it made no fresh Claude probe and did not resume the held Claude queue. The larger current-prompt Claude run and live vendor/HTTP/Teams/enterprise acceptance remain unverified. Local store intake, authored vendor evidence and pending replies establish neither human receipt nor deployment/recovery execution.
