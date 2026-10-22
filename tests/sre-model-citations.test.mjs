@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {citationTransport} from '../src/sre/model-citations.mjs';
+import {citationTransport,investigationInvocationInput} from '../src/sre/model-citations.mjs';
 import {boundedContext} from '../src/sre/model-context.mjs';
 import {investigationCase} from '../fixtures/agent-investigations.mjs';
 
@@ -9,6 +9,23 @@ function snapshot(){
   for(const [n,row]of view.evidence.entries())row.id=(n+1).toString(16).padStart(64,'0');
   return view;
 }
+
+test('repeated question transport is lossless across rooms, conflicting requests and Unicode without mutating durable batches',()=>{
+  const question='Review scoped logs and exact source; '+ '界 🔎 \\ \" '.repeat(40),requests=Array.from({length:32},(_,n)=>({jobId:'job-'+n,conversationKey:'room-'+n,question:n===17?'Do not roll back; investigate the dependency':question})),original=structuredClone(requests),view=snapshot();
+  const invocation=investigationInvocationInput(view,{question,requests}),input=JSON.parse(invocation.input);
+  const expanded=input.requestBatch.map(({questionRef,...request})=>questionRef===undefined?request:{...request,question:input.questionTexts[questionRef]});
+  assert.deepEqual(expanded,requests);assert.deepEqual(requests,original);assert.equal(input.request,question);
+  assert.equal(input.questionTexts.length,1);assert.equal(input.requestBatch[17].question,requests[17].question);
+  assert.ok(Buffer.byteLength(JSON.stringify({questionTexts:input.questionTexts,requestBatch:input.requestBatch}))<Buffer.byteLength(JSON.stringify({requestBatch:requests}))/2);
+  assert.deepEqual(input.incident,invocation.wire);
+});
+
+test('unique and short questions retain ordinary transport when a dictionary would increase input bytes',()=>{
+  for(const requests of [undefined,[{jobId:'one',question:'x'}],[{jobId:'one',question:'x'},{jobId:'two',question:'x'}],[{jobId:'one',question:'first'},{jobId:'two',question:'second'}]]){
+    const input=JSON.parse(investigationInvocationInput(snapshot(),{requests}).input);
+    assert.equal(input.questionTexts,undefined);assert.deepEqual(input.requestBatch,requests);
+  }
+});
 
 test('short citation references preserve source bytes and canonicalize every supported result field before validation',()=>{
   const view=snapshot(),original=structuredClone(view),id=view.evidence[0].id;

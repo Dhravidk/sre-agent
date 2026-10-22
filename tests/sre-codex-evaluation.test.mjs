@@ -42,6 +42,18 @@ test('Codex delivers a complete 32-request batch and rejects excessive bytes bef
   finally{await f.close();}
 });
 
+test('Codex delivers every room request through shared identical text and still enforces original byte and count bounds',async()=>{
+  const f=await fixture(output(events(assessment()))),question='Compare the scoped log evidence and immutable source before proposing a recovery. '.repeat(3),requests=Array.from({length:32},(_,n)=>({jobId:'job-'+n,question,conversationKey:'room-'+n}));
+  try{
+    await f.reasoner.investigate(context(),{requests});const {input,pid}=await f.read();
+    assert.deepEqual(input.questionTexts,[question]);assert.equal(input.requestBatch.length,32);
+    assert.deepEqual(input.requestBatch.map(({questionRef,...request})=>({...request,question:input.questionTexts[questionRef]})),requests);
+    for(const invalid of [[...requests,{...requests[0],jobId:'extra'}],requests.map(r=>({...r,question:'界'.repeat(1000)}))]){
+      await assert.rejects(()=>f.reasoner.investigate(context(),{requests:invalid}),/bounded/);assert.equal((await f.read()).pid,pid);
+    }
+  }finally{await f.close();}
+});
+
 test('Codex evaluation uses a version-pinned official CLI, ChatGPT login, disabled execution host and bounded stdin',async()=>{
   const f=await fixture(output(events(assessment()))),states=[];
   try{
