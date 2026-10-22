@@ -4,7 +4,7 @@ import {mkdtemp,writeFile,readFile,rm,access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {CodexEvaluationReasoner,codexEvaluationSchema,evaluationCliVersion} from '../scripts/lib/codex-evaluation-reasoner.mjs';
+import {CodexEvaluationReasoner,codexEvaluationSchema,evaluationCliVersion,codexInvestigationInstructions} from '../scripts/lib/codex-evaluation-reasoner.mjs';
 import {boundedContext} from '../src/sre/model-context.mjs';
 import {fixtureRisk,riskScope} from '../src/sre/analytic-risk.mjs';
 import {ModelQuotaError} from '../src/sre/model-quota.mjs';
@@ -25,12 +25,13 @@ const events=data=>[boundary,{type:'turn.started'},{type:'item.completed',item:{
 const output=items=>'process.stdout.write('+JSON.stringify(items.map(v=>JSON.stringify(v)).join('\n')+'\n')+'.replaceAll("MODEL_PRIMARY_EVIDENCE",JSON.parse(input).incident.evidence.find(e=>e.content.text==="PRIVATE_EVIDENCE").id));';
 async function fixture(body,{version=evaluationCliVersion,chatgpt=true,timeoutMs=3000}={}){
   const directory=await mkdtemp(join(tmpdir(),'sre-codex-test-')),command=join(directory,'codex-fixture'),record=join(directory,'record.json');
-  await writeFile(command,'#!'+process.execPath+'\n'+`import {readFileSync,writeFileSync} from 'node:fs';
+  await writeFile(command,'#!'+process.execPath+'\n'+`import {readFileSync,writeFileSync,statSync} from 'node:fs';
 const args=process.argv.slice(2);
 if(args[0]==='--version'){console.log('codex-cli ${version}');process.exit(0);}
 if(args[0]==='login'){console.log(${JSON.stringify(chatgpt?'Logged in using ChatGPT':'Logged in using an API key - PRIVATE_KEY')});process.exit(0);}
 let input='';for await(const chunk of process.stdin)input+=chunk;
-writeFileSync(${JSON.stringify(record)},JSON.stringify({pid:process.pid,cwd:process.cwd(),args,input:JSON.parse(input),env:process.env,schema:JSON.parse(readFileSync(args[args.indexOf('--output-schema')+1],'utf8'))}));
+const instructionsPath=JSON.parse(args.find(a=>a.startsWith('model_instructions_file=')).slice('model_instructions_file='.length));
+writeFileSync(${JSON.stringify(record)},JSON.stringify({pid:process.pid,cwd:process.cwd(),args,input:JSON.parse(input),env:process.env,instructions:readFileSync(instructionsPath,'utf8'),instructionsMode:statSync(instructionsPath).mode&0o777,schema:JSON.parse(readFileSync(args[args.indexOf('--output-schema')+1],'utf8'))}));
 ${body}\n`,{mode:0o700});
   const env={...process.env,SRE_API_TOKEN:'PRIVATE_SERVICE',OPENAI_API_KEY:'PRIVATE_API_KEY',CODEX_API_KEY:'PRIVATE_CODEX_KEY',CLAUDE_CODE_OAUTH_TOKEN:'PRIVATE_CLAUDE',DATABASE_URL:'PRIVATE_DB'};
   return {directory,record,reasoner:new CodexEvaluationReasoner({command,timeoutMs,env}),read:async()=>JSON.parse(await readFile(record,'utf8')),close:()=>rm(directory,{recursive:true,force:true})};
@@ -60,6 +61,10 @@ test('Codex evaluation uses a version-pinned official CLI, ChatGPT login, disabl
     const c=context();c.evidence.push({id:'large',kind:'log',source:'logs',observed_at:1,content:{text:'x'.repeat(200000)}});
     const result=await f.reasoner.investigate(c,{question:null,persistRemote:async value=>states.push(value)}),record=await f.read(),args=record.args.join(' ');
     assert.equal(result.analysis.mode,'codex');assert.equal(result.remoteState.provider,'codex-cli');assert.equal(result.remoteState.requestedModel,'gpt-6.1-sol');
+    assert.equal(f.reasoner.options.effort,'medium');assert.equal(f.reasoner.options.verbosity,'low');
+    assert.ok(args.includes('model_reasoning_effort="medium"'));assert.ok(args.includes('model_verbosity="low"'));
+    assert.equal(record.instructions,codexInvestigationInstructions);assert.equal(hash(record.instructions),f.reasoner.options.promptHash);assert.equal(record.instructionsMode,0o600);
+    assert.ok(args.includes('developer_instructions=""'));assert.ok(!record.instructions.includes('PRIVATE_'));assert.ok(record.instructions.includes('as schema-conforming JSON'));
     assert.equal(result.remoteState.usage.input_tokens,100);assert.equal(states[0].phase,'started');
     for(const flag of ['--ignore-user-config','--ignore-rules','--ephemeral','--strict-config','--enable code_mode_only','--disable code_mode_host','--disable shell_tool','--disable apps','--disable plugins','--disable multi_agent','web_search="disabled"','mcp_servers={}'])assert.ok(args.includes(flag),flag);
     assert.ok(!args.includes('PRIVATE_EVIDENCE'));assert.ok(record.input.incident.evidence.some(e=>e.content.text==='PRIVATE_EVIDENCE'));
