@@ -23,6 +23,17 @@ async function materialize({value=content,request=proof(),owner=service(),reader
 }
 const finding=f=>({evidenceId:f.row.id,provider:'gitlab',project,sha:head,path,startLine:3,endLine:3,quote:'    update_without_version()',explanation:'The update omits the observed version in this exact source; reproduce the request before treating it as cause.'});
 
+test('numbered source snapshots mark an active restore hold, and a retained released fence does not mark subsequent reads historical',async()=>{
+ const f=await materialize(),original=sourceReferenceWindow(f.context);
+ assert.ok(original.files.length);assert.equal(original.historicalAfterRestore,false);
+ for(const active of [true,false]){
+  const context={...f.context,recoveryFence:{active,restoreId:'source-restore',state:active?'held':'released'}},window=sourceReferenceWindow(context),snapshot=boundedContext(context);
+  assert.equal(window.historicalAfterRestore,active);assert.equal(snapshot.sourceCode.historicalAfterRestore,active);
+  assert.deepEqual(window.files,original.files);assert.deepEqual(window.coverage,original.coverage);
+  const verified=validateSourceFindings([finding(f)],context,snapshot);assert.equal(verified[0].verifiedLocation,true);
+ }
+});
+
 test('generic source collection is explicitly off by default and cannot choose another provider',async()=>{
  let calls=0;const client={file:async()=>{calls++;throw Error('No source read expected');}};
  assert.equal(await collectSourceEvidence(proof(),{service:{gitlab:{project}},client}),null);
