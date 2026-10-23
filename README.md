@@ -27,6 +27,8 @@ The approved [diagnosis milestone](docs/DYNATRACE-GITLAB-DIAGNOSIS.md) focuses o
 
 The [larger-repository follow-up](docs/DYNATRACE-LARGE-REPOSITORIES.md) reserves source capacity for imported helpers beyond the initial diff selection. `pnpm sre:diagnosis:eval --live --provider codex --suite large --partition validation` exercises new authored mechanisms in 1,200-file repositories with 30,000-record noisy initial batches. Calibration and validation are separate; neither is a live vendor acceptance test.
 
+The [multi-file follow-up](docs/DYNATRACE-MULTIFILE-DIAGNOSIS.md) exercises caller/adapter/helper relationships in 4,000-file repositories and 60,000-record initial batches: `pnpm sre:diagnosis:eval --live --provider codex --suite multifile --partition validation`. Its scorer requires every declared culprit and rejects healthy contextual files as candidate defects. Teams remains deferred.
+
 `pnpm sre:dynatrace:multi:eval --live` runs [five simultaneous messy incidents](docs/DYNATRACE-MULTI-INCIDENT-EVALUATION.md) through the actual Claude worker, with shared-service evidence, a question burst, duplicate deliveries, peer-worker exclusion and restart. Source/telemetry readers are authored fixtures; the model must distinguish a compatible rollback, forward fixes, dependency mitigation and insufficient evidence.
 
 The original offline rules console remains available explicitly with `pnpm sre:lab` on port 3001. Ally credentials, internal mappings, verified enterprise MCP schemas, deployment workflows, and production acceptance are not included. Private/generated `.local/` evidence is excluded. Dated checkpoint counts describe historical runs rather than the current checkout.

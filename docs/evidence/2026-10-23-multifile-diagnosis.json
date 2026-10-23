@@ -1,0 +1,697 @@
+{
+  "version": 1,
+  "date": "2026-10-23",
+  "scope": "Actual official Codex reasoning over bounded stdin; generated first-party Git source and mocked vendor HTTP, deployment/health/compatibility/probe facts. Separate authored calibration/validation mechanisms, not independent enterprise acceptance. All incidents queued together and diagnosed sequentially; no Teams workload.",
+  "pullRequest": 3,
+  "runtimeCommit": "3a147eb441fa40295ad979714781672605ada1c6",
+  "source": {
+    "files": 212,
+    "aggregateSha256": "3693249f9a65444035974e2a10b208591b8de1627b508e405dccd1a9d90154e1",
+    "coverage": "src/, scripts/, config/, fixtures/, package.json, pnpm-lock.yaml",
+    "allMatchedAfterVerification": true
+  },
+  "tests": {
+    "node": "24.19.0",
+    "pnpm": "11.25.0",
+    "frozenLockfileInstall": true,
+    "baseline": {
+      "tests": 2562,
+      "pass": 2562,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 458516.349
+    },
+    "final": {
+      "tests": 2571,
+      "pass": 2571,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 411940.219459
+    },
+    "command": "pnpm test --test-concurrency=3",
+    "idleSleepInhibitedForProcess": true
+  },
+  "focusedChecks": {
+    "reservationAndGraph": {
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 2593.806792
+    },
+    "roundThreeRecovery": {
+      "tests": 11,
+      "pass": 11,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 8854.142292
+    },
+    "sourceRecovery": {
+      "tests": 111,
+      "pass": 111,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "duration_ms": 18588.727125
+    }
+  },
+  "limits": {
+    "sourceAttempts": 8,
+    "acceptedSourceBytes": 64000,
+    "bytesPerFile": 16000,
+    "initialReservedAttempts": 4,
+    "initialReservedBytes": 48000,
+    "followupRounds": 3,
+    "proposals": 6,
+    "proposalsPerRound": 2,
+    "diagnosticLogQueries": 2,
+    "maxReasonerInvocations": 4,
+    "sharedInvestigationDeadlineMs": 240000,
+    "deadlineExtended": false
+  },
+  "negativeReproductions": [
+    "Temporary 40 KB/32 KB reservation boundary and concurrent acceptance pressure previously cached unavailable source; both red regressions fixed without refunding attempted reads.",
+    "Initial caller/adapter context was missing under noisy path priority; comparison anchor and deeper bounded follow-ups addressed it."
+  ],
+  "validation": {
+    "firstPass": true,
+    "responseDrivenTuning": false,
+    "provider": "codex",
+    "cliVersion": "0.163.0-alpha.10.2",
+    "requestedModel": "gpt-6.1-sol",
+    "effort": "medium",
+    "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+    "initialAuthoredRecords": 300000,
+    "initialRequestWitnessPercent": 1,
+    "filesPerRepository": 4000,
+    "repositories": [
+      {
+        "caseId": "chain-v01",
+        "project": "fixture/large-chain-v01",
+        "revisions": {
+          "base": "a8d46563007726ce5a9d9c9a5311d0befb44012b",
+          "observed": "b6cf363883a44b008a4b55fec88d69e0aee697e9"
+        },
+        "files": 4000,
+        "changedFiles": 79
+      },
+      {
+        "caseId": "chain-v02",
+        "project": "fixture/large-chain-v02",
+        "revisions": {
+          "base": "439f8d6dfbc18279e0b907b8d124a994d6629741",
+          "observed": "d917e7e49c1ef868e421588b1c568c1416f66387"
+        },
+        "files": 4000,
+        "changedFiles": 79
+      },
+      {
+        "caseId": "chain-v03",
+        "project": "fixture/large-chain-v03",
+        "revisions": {
+          "base": "06108b335eb3087581f3ea30bccc309c0a04fcf9",
+          "observed": "7c4d2702a627670299567ca85d0b7b0beaaca47b"
+        },
+        "files": 4000,
+        "changedFiles": 78
+      },
+      {
+        "caseId": "chain-v04",
+        "project": "fixture/large-chain-v04",
+        "revisions": {
+          "base": "7641e5fa5afcfb08fe6f70e769825714d3ea4bb0",
+          "observed": "922701c6f6be73d435cceec2e23e991e0e0147e2"
+        },
+        "files": 4000,
+        "changedFiles": 78
+      },
+      {
+        "caseId": "chain-v05",
+        "project": "fixture/large-chain-v05",
+        "revisions": {
+          "base": "bc94f82e5c33a6edd3f5ab4518d9b5f47e61462d",
+          "observed": "96ff1381d7d111b4be91c10a413c3c96895f51c5"
+        },
+        "files": 4000,
+        "changedFiles": 78
+      }
+    ],
+    "authoredStageChecksMatched": 10,
+    "authoredCounterfactualChecksMatched": 2,
+    "run": {
+      "name": "validation-v1",
+      "status": "passed",
+      "frozenInputHash": "3693249f9a65444035974e2a10b208591b8de1627b508e405dccd1a9d90154e1",
+      "cases": [
+        {
+          "caseId": "chain-v01",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 157798,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "likely",
+          "remediation": "rollback-candidate",
+          "sourceFindings": [
+            {
+              "path": "packages/deduplication/rules/identity.mjs",
+              "sha": "b6cf363883a44b008a4b55fec88d69e0aee697e9",
+              "startLine": 2,
+              "endLine": 2
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/deduplication"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        },
+        {
+          "caseId": "chain-v02",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 144352,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "likely",
+          "remediation": "forward-fix",
+          "sourceFindings": [
+            {
+              "path": "packages/signed-adjustments/rules/balance.mjs",
+              "sha": "d917e7e49c1ef868e421588b1c568c1416f66387",
+              "startLine": 2,
+              "endLine": 2
+            },
+            {
+              "path": "services/signed-adjustments/adapter.mjs",
+              "sha": "d917e7e49c1ef868e421588b1c568c1416f66387",
+              "startLine": 3,
+              "endLine": 3
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/signed-adjustments"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        },
+        {
+          "caseId": "chain-v03",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 172582,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "unlikely",
+          "remediation": "forward-fix",
+          "sourceFindings": [
+            {
+              "path": "packages/event-order/rules/minimum.mjs",
+              "sha": "7c4d2702a627670299567ca85d0b7b0beaaca47b",
+              "startLine": 2,
+              "endLine": 3
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/event-order"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        },
+        {
+          "caseId": "chain-v04",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 154708,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "unlikely",
+          "remediation": "dependency-mitigation",
+          "sourceFindings": [],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/resource-access"
+                }
+              ],
+              "complete": true,
+              "records": 8
+            }
+          ]
+        },
+        {
+          "caseId": "chain-v05",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 158191,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true
+          },
+          "changeAssessment": "unknown",
+          "remediation": "collect-evidence",
+          "sourceFindings": [],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/resource-identifiers"
+                }
+              ],
+              "complete": false,
+              "records": 6
+            }
+          ]
+        }
+      ],
+      "attempts": 20,
+      "validatedResponses": 20,
+      "failedCalls": [],
+      "medianInvocationMs": 39701.5,
+      "maxInvocationMs": 46181,
+      "reopenPreserved": true,
+      "noExecution": true,
+      "noMessages": true,
+      "resources": [
+        {
+          "caseId": "chain-v01",
+          "fileHttpCalls": 6,
+          "successfulResponseBytes": 53968,
+          "acceptedBytesAtLastInvocation": 53968,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        },
+        {
+          "caseId": "chain-v02",
+          "fileHttpCalls": 6,
+          "successfulResponseBytes": 53974,
+          "acceptedBytesAtLastInvocation": 53974,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        },
+        {
+          "caseId": "chain-v03",
+          "fileHttpCalls": 6,
+          "successfulResponseBytes": 54049,
+          "acceptedBytesAtLastInvocation": 54049,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        },
+        {
+          "caseId": "chain-v04",
+          "fileHttpCalls": 6,
+          "successfulResponseBytes": 54011,
+          "acceptedBytesAtLastInvocation": 54011,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        },
+        {
+          "caseId": "chain-v05",
+          "fileHttpCalls": 5,
+          "successfulResponseBytes": 31862,
+          "acceptedBytesAtLastInvocation": 31862,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        }
+      ]
+    }
+  },
+  "developmentRuns": [
+    {
+      "name": "calibration-v1",
+      "status": "passed",
+      "frozenInputHash": "2ad60e8110e80d20258da35018c33548571c2378e6e6528e82cc72a6a810eee9",
+      "cases": [
+        {
+          "caseId": "chain-c01",
+          "status": "passed",
+          "calls": 3,
+          "elapsedMs": 129108,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "likely",
+          "remediation": "rollback-candidate",
+          "sourceFindings": [
+            {
+              "path": "services/batching/adapter.mjs",
+              "sha": "73244ac129c8b7f3de436c956ff8142a76bc2ad3",
+              "startLine": 3,
+              "endLine": 3
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/batching"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        },
+        {
+          "caseId": "chain-c02",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 195851,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "likely",
+          "remediation": "forward-fix",
+          "sourceFindings": [
+            {
+              "path": "services/discounting/adapter.mjs",
+              "sha": "246da4128b0c2b69e84dd44964ea46ad11b5957f",
+              "startLine": 3,
+              "endLine": 3
+            },
+            {
+              "path": "packages/discounting/rules/adjustment.mjs",
+              "sha": "246da4128b0c2b69e84dd44964ea46ad11b5957f",
+              "startLine": 2,
+              "endLine": 2
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/discounting"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        }
+      ],
+      "attempts": 7,
+      "validatedResponses": 7,
+      "failedCalls": [],
+      "medianInvocationMs": 46216,
+      "maxInvocationMs": 55664,
+      "reopenPreserved": true,
+      "noExecution": true,
+      "noMessages": true,
+      "resources": [
+        {
+          "caseId": "chain-c01",
+          "fileHttpCalls": 4,
+          "successfulResponseBytes": 31884,
+          "acceptedBytesAtLastInvocation": 31884,
+          "attemptsConsumedAtLastInvocation": 4,
+          "diagnosticQueries": 1
+        },
+        {
+          "caseId": "chain-c02",
+          "fileHttpCalls": 5,
+          "successfulResponseBytes": 42920,
+          "acceptedBytesAtLastInvocation": 42920,
+          "attemptsConsumedAtLastInvocation": 5,
+          "diagnosticQueries": 1
+        }
+      ]
+    },
+    {
+      "name": "calibration-lexical",
+      "status": "failed",
+      "frozenInputHash": "3693249f9a65444035974e2a10b208591b8de1627b508e405dccd1a9d90154e1",
+      "cases": [
+        {
+          "caseId": "chain-c02",
+          "status": "failed",
+          "calls": 4,
+          "error": "Codex evaluation cancelled"
+        }
+      ],
+      "attempts": 4,
+      "validatedResponses": 3,
+      "failedCalls": [
+        {
+          "ordinal": 4,
+          "elapsedMs": 115678,
+          "error": "Codex evaluation cancelled"
+        }
+      ],
+      "medianInvocationMs": 38202,
+      "maxInvocationMs": 52301,
+      "reopenPreserved": true,
+      "noExecution": true,
+      "noMessages": true,
+      "resources": [
+        {
+          "caseId": "chain-c02",
+          "fileHttpCalls": 6,
+          "successfulResponseBytes": 53941,
+          "acceptedBytesAtLastInvocation": 53941,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        }
+      ]
+    },
+    {
+      "name": "calibration-lexical-repeat",
+      "status": "passed",
+      "frozenInputHash": "3693249f9a65444035974e2a10b208591b8de1627b508e405dccd1a9d90154e1",
+      "cases": [
+        {
+          "caseId": "chain-c01",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 165478,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "likely",
+          "remediation": "rollback-candidate",
+          "sourceFindings": [
+            {
+              "path": "services/batching/adapter.mjs",
+              "sha": "dbe847214bc02c0b7b702cf2141aaea26b40a163",
+              "startLine": 3,
+              "endLine": 3
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/batching"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        },
+        {
+          "caseId": "chain-c02",
+          "status": "passed",
+          "calls": 4,
+          "elapsedMs": 176299,
+          "checks": {
+            "actualProvider": true,
+            "followUpLogRead": true,
+            "exactSource": true,
+            "recoveryStrategy": true,
+            "rollbackTarget": true,
+            "attribution": true,
+            "followUpCited": true,
+            "developerSpec": true,
+            "attributionClass": true,
+            "noFalseCandidateFiles": true,
+            "crossFileContext": true
+          },
+          "changeAssessment": "likely",
+          "remediation": "forward-fix",
+          "sourceFindings": [
+            {
+              "path": "services/discounting/adapter.mjs",
+              "sha": "aa9671f317bcc463959e43a3c4bd9ca580b6d860",
+              "startLine": 3,
+              "endLine": 3
+            },
+            {
+              "path": "packages/discounting/rules/adjustment.mjs",
+              "sha": "aa9671f317bcc463959e43a3c4bd9ca580b6d860",
+              "startLine": 2,
+              "endLine": 2
+            }
+          ],
+          "readSelections": [
+            {
+              "filters": [
+                {
+                  "field": "http.route",
+                  "value": "/process/discounting"
+                }
+              ],
+              "complete": true,
+              "records": 6
+            }
+          ]
+        }
+      ],
+      "attempts": 8,
+      "validatedResponses": 8,
+      "failedCalls": [],
+      "medianInvocationMs": 41222.5,
+      "maxInvocationMs": 49479,
+      "reopenPreserved": true,
+      "noExecution": true,
+      "noMessages": true,
+      "resources": [
+        {
+          "caseId": "chain-c01",
+          "fileHttpCalls": 5,
+          "successfulResponseBytes": 42905,
+          "acceptedBytesAtLastInvocation": 42905,
+          "attemptsConsumedAtLastInvocation": 5,
+          "diagnosticQueries": 1
+        },
+        {
+          "caseId": "chain-c02",
+          "fileHttpCalls": 6,
+          "successfulResponseBytes": 53941,
+          "acceptedBytesAtLastInvocation": 53941,
+          "attemptsConsumedAtLastInvocation": 6,
+          "diagnosticQueries": 1
+        }
+      ]
+    }
+  ],
+  "manualReview": {
+    "reviewer": "Implementing agent; not an independent reviewer",
+    "scope": "Final causal mechanisms, cross-file negative/control tests, correct introduction-vs-presence distinction, dependency/unknown controls, and separate deployment/data-repair questions",
+    "draftClarification": "The dependency draft has an ambiguous configuration-change condition. Change configuration only when an approved entitlement contract establishes that these denied requests should be allowed; preserve denials for unauthorized callers. Original response retained unchanged."
+  },
+  "remainingAcceptance": [
+    "Actual tenant Dynatrace auth/DQL/field/time/sampling/completeness/cost contracts",
+    "GitLab read permissions and runtime/project/commit/artifact binding",
+    "Independently established historical incidents and production acceptance",
+    "Separate real-Claude quality and timing run when available"
+  ],
+  "deferred": [
+    "Teams",
+    "Jira/ServiceNow/Confluence connector work",
+    "External ticket/MR publication",
+    "Deployment execution"
+  ]
+}
