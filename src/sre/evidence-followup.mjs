@@ -11,6 +11,13 @@ import {observedDiagnosticLogFilters} from './diagnostic-log-query.mjs';
 
 const fullSha=value=>typeof value==='string'&&/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
 const semantic=request=>Object.fromEntries(Object.entries(request).filter(([key])=>key!=='reason'));
+function canonicalFixedProject(request,policy){
+ // Naming the exact host-fixed project grants no additional-project authority.
+ // Normalize before validation/dedup/persistence so both spellings use the
+ // fixed reader and the same immutable scope/cache/history contracts.
+ if(['gitlab_file','gitlab_tree'].includes(request.kind)&&policy.source?.project&&request.project===policy.source.project){const {project,...fixed}=request;return fixed;}
+ return request;
+}
 function logReadCoverage(content,request){
  let invalidRecords=0,missingTimes=0,conflictingTimes=0,outsideWindow=0;
  const stamp=value=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:typeof value==='string'&&/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isSafeInteger(Date.parse(value))?Date.parse(value):null;
@@ -31,6 +38,7 @@ export class EvidenceFollowup {
   if(enabled&&(scope?.project&&typeof this.clients.gitlab?.directory==='function'&&revisions.length||additionalProjects.length&&typeof this.clients.gitlab?.discoveryDirectory==='function'))kinds.push('gitlab_tree');
   if(enabled&&(typeof logs?.logs==='function'||typeof logs?.diagnosticLogs==='function')&&Number.isSafeInteger(started)&&started>=0&&started-evidenceReadLimits.logWindowMs<=now)kinds.push('dynatrace_logs');
   const policy={version:1,enabled,round,remainingRounds:Math.max(0,evidenceReadLimits.rounds-round),remainingRequests:Math.max(0,evidenceReadLimits.requests-this.used),remainingLogQueries:Math.max(0,evidenceReadLimits.logQueries-this.logQueries),kinds,source:scope?{project:scope.project,allowedRevisions:scope.project?revisions:[],...(additionalProjects.length?{additionalProjects}:{}),maxLines:evidenceReadLimits.sourceLines,...(kinds.includes('gitlab_tree')?{directory:{recursive:false,maxEntries:sourceInventoryLimits.pages*sourceInventoryLimits.pageSize,maxPages:sourceInventoryLimits.pages}}:{})}:null,logs:{earliestFrom:Math.max(0,started-evidenceReadLimits.logWindowMs),latestTo:now,maxWindowMs:evidenceReadLimits.logWindowMs},note:'These are host read constraints, not credentials or action authority. Only the configured fixed project or explicitly listed additional project/revision pairs and service are accessible. Additional projects remain runtime mapping candidates. Omitted evidence and failed/partial reads stay unknown.'};
+  if(policy.source)Object.assign(policy.source,{remainingReads:this.sourceBudget.reads,remainingBytes:this.sourceBudget.bytes});
   if(kinds.includes('dynatrace_logs')&&typeof logs.diagnosticLogs==='function')policy.logs.filters={maxFilters:3,fields:observedDiagnosticLogFilters(view),note:'Optional ANDed exact selectors from these delivered values only. They narrow the fixed service/environment, never broaden access. A filtered complete result covers only that selection, not the incident.'};
   this.policies??=new Map();this.policies.set(round,structuredClone(policy));return policy;
  }
@@ -43,6 +51,7 @@ export class EvidenceFollowup {
  }
  async run(requests,context,round,{limited=false}={}){
   requests=validateEvidenceRequests(requests);const policy=this.policies?.get(round)||await this.policy(context,round),revision=Number(context.incident.revision);let logsCollected=false;
+  requests=requests.map(request=>canonicalFixedProject(request,policy));
   if(!policy.enabled&&requests.length)throw Error('Follow-up evidence reads are not enabled');
   for(const[index,request]of requests.entries()){
    if(this.signal?.aborted)throw this.signal.reason;const key=hash(semantic(request)),refusal=this.refusal(request,policy),base={round,index,request,requestHash:hash(request)};

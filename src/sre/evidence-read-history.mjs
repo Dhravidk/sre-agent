@@ -1,7 +1,7 @@
 import {validatedSourceInventory} from './source-inventory.mjs';
 import {discoveryScope} from './source-discovery-config.mjs';
 import {hash} from './security.mjs';
-import {validateEvidenceRequests,retainedEvidenceReads,evidenceReadResource} from './evidence-request.mjs';
+import {validateEvidenceRequests,retainedEvidenceReads,evidenceReadResource,evidenceReadLimits} from './evidence-request.mjs';
 
 export const evidenceReadHistoryLimits=Object.freeze({candidates:64,resources:8});
 const id=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
@@ -9,7 +9,7 @@ const semantic=request=>Object.fromEntries(Object.entries(request).filter(([key]
 const resource=evidenceReadResource;
 function receipt(row,incident){
  const body=JSON.parse(row.content);
- if(row.incident_id!==incident.id||row.source!=='system'||row.kind!=='evidence_read'||hash([incident.id,'system','evidence_read',body])!==row.id||body.version!==1||body.serviceKey!==incident.service_key||!id(body.jobId)||!Number.isSafeInteger(body.attempt)||body.attempt<1||!Number.isSafeInteger(body.revision)||body.revision<0||body.revision>Number(incident.revision)||!Number.isSafeInteger(body.round)||body.round<0||body.round>2||!Number.isSafeInteger(body.index)||body.index<0||body.index>1)throw Error('Unverified read receipt');
+ if(row.incident_id!==incident.id||row.source!=='system'||row.kind!=='evidence_read'||hash([incident.id,'system','evidence_read',body])!==row.id||body.version!==1||body.serviceKey!==incident.service_key||!id(body.jobId)||!Number.isSafeInteger(body.attempt)||body.attempt<1||!Number.isSafeInteger(body.revision)||body.revision<0||body.revision>Number(incident.revision)||!Number.isSafeInteger(body.round)||body.round<0||body.round>evidenceReadLimits.rounds||!Number.isSafeInteger(body.index)||body.index<0||body.index>1)throw Error('Unverified read receipt');
  const [request]=validateEvidenceRequests([body.request]);return{body,request};
 }
 function verifiedOutcome(row,incident,service){
