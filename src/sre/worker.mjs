@@ -34,7 +34,7 @@ export class IncidentWorker {
     const clients=this.connectors.get(service.key)||{};
     const modelBacked=['claude','codex'].includes(this.reasoner?.mode);let priorityReferences=[];
     const previousReservation=sourceBudget.initialReservation;
-    if(modelBacked&&service.investigation?.followUp?.enabled===true)sourceBudget.initialReservation={reads:2+(previousReservation?.reads??0),bytes:32000+(previousReservation?.bytes??0)};
+    if(modelBacked&&service.investigation?.followUp?.enabled===true)sourceBudget.initialReservation={reads:4+(previousReservation?.reads??0),bytes:48000+(previousReservation?.bytes??0)};
     const fixed=provider=>clients[provider]&&(provider!=='gitlab'||Boolean(service.gitlab?.project));
     const sourceProof=async(parameters)=>{
       const original=parameters.client;
@@ -45,7 +45,7 @@ export class IncidentWorker {
         if(file.state!=='available')throw Error(file.error||'Immutable source unavailable');
         return {path:file.path,sha:file.sha,complete:true,content:file.content};
       }}):original;
-      const options={...parameters,client},proof=modelBacked?await bindSourceEvidence({...options,priorityReferences}):await bindPolicyEvidence(options);
+      const options={...parameters,client},proof=modelBacked?await bindSourceEvidence({...options,priorityReferences,retainComparisonAnchor:service.gitlab?.sourceInspection?.enabled===true&&service.investigation?.followUp?.enabled===true}):await bindPolicyEvidence(options);
       const policy=modelBacked&&service.gitlab?.sourceInspection?.enabled?await bindPolicyEvidence(options):proof;
       const sourceInspection=await collectSourceEvidence({...policy,complete:parameters.complete},{service,client:original,budget:sourceBudget,signal});
       if(sourceInspection)proof.sourceInspection=sourceInspection;

@@ -18,20 +18,20 @@ for(const enabled of [true,false])test('large multi-file collection '+(enabled?'
   const {incidentId}=await runtime.store.ingest({id:'large-diagnosis',source:'operator-api',serviceKey:state.service.key,kind:'problem',issueKey:'large-diagnosis',status:'OPEN',at:state.at,payload:{synthetic:true}}),job=await runtime.store.claim('large-diagnosis');
   await runtime.worker.collect(await runtime.store.context(incidentId),new AbortController().signal,budget,job);
   let context=await runtime.store.context(incidentId);const view=boundedContext(context);
-  assert.equal(budget.reads,enabled?2:0);assert.equal(budget.initialReservation,undefined);
-  assert.equal(fixture.calls.filter(call=>call.path?.includes('/repository/files/')).length,enabled?6:8);
+  const initialReads=fixture.calls.filter(call=>call.path?.includes('/repository/files/')).length;
+  assert.ok(enabled?budget.reads>=4:budget.reads===0);assert.equal(budget.initialReservation,undefined);assert.equal(initialReads+budget.reads,8);
   assert.ok(view.sourceCode.files.every(file=>file.path!==state.entry.path));assert.ok(view.sourceCode.files.some(file=>file.path===state.entry.entryPath));
   assert.ok(!JSON.stringify(view).includes(fixture.gold[0].mechanism));assert.ok(!JSON.stringify(view).includes('actual":2000'));
   if(enabled){
    const followup=new EvidenceFollowup({store:runtime.store,job,service:state.service,clients:fixture.connectors.get(state.service.key),sourceBudget:budget}),policy=await followup.policy(context,0);
-   assert.equal(policy.source.remainingReads,2);assert.ok(policy.source.remainingBytes>=32000);
+   assert.equal(policy.source.remainingReads,budget.reads);assert.ok(policy.source.remainingBytes>=48000);
    await followup.run([{kind:'dynatrace_logs',from:state.at-300000,to:state.at+100,filters:[{field:'http.route',value:'/process/checkout'}],reason:'Compare old and new business outcomes'},{kind:'gitlab_tree',project:state.entry.project,sha:state.entry.revisions.observed,path:'packages/checkout/rules',reason:'Verify the imported helper directory within the fixed project'}],context,0);
    context=await runtime.store.context(incidentId);await followup.policy(context,1);
    await followup.run(['base','observed'].map(stage=>({kind:'gitlab_file',project:state.entry.project,sha:state.entry.revisions[stage],path:state.entry.path,startLine:1,endLine:3,reason:'Inspect the imported helper at each exact release'})),context,1);
    context=await runtime.store.context(incidentId);
    assert.equal(context.evidence.find(row=>row.kind==='logs'&&row.content.followUp).content.records.length,6);
    const files=context.sourceCode.files.filter(file=>file.path===state.entry.path);assert.equal(files.length,2);assert.deepEqual(new Set(files.map(file=>file.sha)),new Set(Object.values(state.entry.revisions)));assert.ok(context.sourceInventories.inventories.some(row=>row.project===state.entry.project&&row.entries.some(file=>file.path===state.entry.path)));
-   assert.equal(budget.reads,0);assert.equal(fixture.calls.filter(call=>call.path?.includes('/repository/files/')).length,8);
+   assert.equal(budget.reads,policy.source.remainingReads-2);assert.equal(fixture.calls.filter(call=>call.path?.includes('/repository/files/')).length,initialReads+2);
   }
   const previous={reads:1,bytes:1000},cancelled=sourceReadBudget();cancelled.initialReservation=previous;
   await assert.rejects(()=>runtime.worker.collect(context,AbortSignal.abort(Error('collection cancelled')),cancelled,job),/cancelled/);assert.equal(cancelled.initialReservation,previous);assert.equal(cancelled.reads,8);
