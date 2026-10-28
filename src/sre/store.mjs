@@ -8,7 +8,7 @@ import {sourceInventoryWindow,materialSourceInventory} from './source-inventory.
 import {materialDiscovery,discoverySummary} from './source-discovery.mjs';
 import {sourceScopeForService} from './source-evidence.mjs';
 import {verifiedLogSourceSamples} from './log-source.mjs';
-import {materialEvidenceReads} from './evidence-request.mjs';
+import {materialEvidenceReads,evidenceReadLimits} from './evidence-request.mjs';
 import {materialSourceFindings,sourceReferenceWindow} from './source-references.mjs';
 import {readSourceIdentityHistory} from './source-identity-history.mjs';
 import {beginInitialEvidence,completeInitialEvidence,initialEvidenceOwner,lockServiceObservations} from './initial-evidence.mjs';
@@ -355,7 +355,7 @@ export class SreStore {
     return id;
   }
   async recordEvidenceRead(job,expectedRevision,event,artifact){
-    if(!Number.isSafeInteger(expectedRevision)||!Number.isSafeInteger(event?.round)||event.round<0||event.round>2||!Number.isSafeInteger(event.index)||event.index<0||event.index>2||!['started','collected','unavailable','refused','limited','duplicate','derived-source-started','derived-source','discovery-started','discovery-collected'].includes(event.phase)||Buffer.byteLength(json(event),'utf8')>10000)throw Error('Invalid evidence read checkpoint');
+    if(!Number.isSafeInteger(expectedRevision)||!Number.isSafeInteger(event?.round)||event.round<0||event.round>evidenceReadLimits.rounds||!Number.isSafeInteger(event.index)||event.index<0||event.index>2||!['started','collected','unavailable','refused','limited','duplicate','derived-source-started','derived-source','discovery-started','discovery-collected'].includes(event.phase)||Buffer.byteLength(json(event),'utf8')>10000)throw Error('Invalid evidence read checkpoint');
     if(artifact&&!(['gitlab:source_requested','gitlab:source_inventory','gitlab:source_locations','gitlab:source_discovery','dynatrace:logs'].includes(artifact.source+':'+artifact.kind)))throw Error('Invalid follow-up evidence artifact');
     return this.db.transaction(async q=>{
       const suffix=this.db.dialect==='postgres'?' FOR UPDATE':'', [lease]=await q('SELECT * FROM sre_locks WHERE name=?'+suffix,[investigatorLeaseName(job)]),[current]=await q('SELECT incident_id,status,attempts,lease_owner,lease_until FROM sre_jobs WHERE id=?'+suffix,[job.id]);

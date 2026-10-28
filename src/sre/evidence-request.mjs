@@ -1,6 +1,6 @@
 import {discoveryProject} from './source-discovery-config.mjs';
 import {diagnosticLogFilters,diagnosticLogFilterSchema} from './diagnostic-log-query.mjs';
-export const evidenceReadLimits=Object.freeze({rounds:2,requestsPerRound:2,requests:4,logQueries:2,logWindowMs:900000,logBytes:128000,logRecords:200,sourceLines:80});
+export const evidenceReadLimits=Object.freeze({rounds:3,requestsPerRound:2,requests:6,logQueries:2,logWindowMs:900000,logBytes:128000,logRecords:200,sourceLines:80});
 const common={kind:{type:'string'},reason:{type:'string',minLength:1,maxLength:500}},file={...common,project:{type:'string',maxLength:128},kind:{const:'gitlab_file'},sha:{type:'string'},path:{type:'string',maxLength:512},startLine:{type:'integer',minimum:1,maximum:1000000},endLine:{type:'integer',minimum:1,maximum:1000000}},tree={...common,project:{type:'string',maxLength:128},kind:{const:'gitlab_tree'},sha:{type:'string'},path:{type:'string',maxLength:512}},logs={...common,kind:{const:'dynatrace_logs'},from:{type:'integer',minimum:0},to:{type:'integer',minimum:0},filters:diagnosticLogFilterSchema};
 const required=fields=>Object.keys(fields).filter(key=>!['project','filters'].includes(key));
 export const evidenceRequestSchema={oneOf:[{type:'object',additionalProperties:false,properties:tree,required:required(tree)},{type:'object',additionalProperties:false,properties:file,required:required(file)},{type:'object',additionalProperties:false,properties:logs,required:required(logs)}]};

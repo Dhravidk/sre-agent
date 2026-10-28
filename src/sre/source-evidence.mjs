@@ -35,10 +35,16 @@ export async function readImmutableSource(path,revision,{service,client,budget=s
  const scope=sourceScopeForService(service);if(!scope?.project||!sourceTextPath(path)||!sha(revision))throw Error('An explicitly scoped immutable text source is required');
  if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');
  const key=JSON.stringify([service.key,service.tenant,service.environment,service.gitlab.base,scope.project,path,revision]);budget.files??=new Map();
- // Optional history must leave pending primary file requests their shared budget.
+ // Initial collection leaves capacity for model-directed follow-ups; optional
+ // history also leaves pending primary files their portion of that same budget.
  // A deferred optional read is not cached as a failed primary file response.
- if(!budget.files.has(key)&&(reserveReads>0||reserveBytes>0)&&(budget.reads<=reserveReads||budget.bytes<=reserveBytes))return{state:'unavailable',path,sha:revision,error:'Shared source budget reserved for pending primary file requests'};
+ reserveReads+=budget.initialReservation?.reads??0;reserveBytes+=budget.initialReservation?.bytes??0;
+ // The response size is not known before the call. Defer if even one maximum
+ // allowed file could cross the temporary floor; do not spend an attempt or
+ // turn that deferral into a cached provider failure.
+ if(!budget.files.has(key)&&(reserveReads>0||reserveBytes>0)&&(budget.reads<=reserveReads||budget.bytes-reserveBytes<Math.min(sourceInspectionLimits.bytesPerFile,budget.bytes)))return{state:'unavailable',path,sha:revision,error:'Shared source budget reserved for follow-up or pending primary file requests'};
  if(!budget.files.has(key)){
+  let reservationDeferred=false;
   // Reserve before awaiting so every source collector shares the same promise.
   const pending=(async()=>{
    if(!budget.reads||budget.bytes<=0)return{state:'unavailable',path,sha:revision,error:'Source read budget exhausted'};budget.reads--;
@@ -46,12 +52,18 @@ export async function readImmutableSource(path,revision,{service,client,budget=s
     if(typeof client?.file!=='function')throw Error('An immutable source reader is unavailable');
     const value=await client.file(path,revision,{signal});if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');
     if(value?.path!==path||value.sha!==revision||value.complete!==true||typeof value.content!=='string')throw Error('Source identity or coverage differs from the requested file');
-    const size=Buffer.byteLength(value.content,'utf8');if(size>sourceInspectionLimits.bytesPerFile||size>budget.bytes-reserveBytes)throw Error('Source file exceeds the accepted byte budget');
+    const size=Buffer.byteLength(value.content,'utf8');if(size>sourceInspectionLimits.bytesPerFile||size>budget.bytes)throw Error('Source file exceeds the accepted byte budget');
     if(/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value.content))throw Error('A credential block cannot enter source inspection');
-    const content=redact(value.content);if(content.split('\n').length!==value.content.split('\n').length)throw Error('Redaction changed source line layout; line references are unavailable');budget.bytes-=size;
+    const content=redact(value.content);if(content.split('\n').length!==value.content.split('\n').length)throw Error('Redaction changed source line layout; line references are unavailable');
+    // Another in-flight source may have consumed the initially free bytes.
+    // Its accepted data stays charged, and this attempted read stays charged,
+    // but a reservation-only failure must not poison a later primary read.
+    if(size>budget.bytes-reserveBytes){reservationDeferred=true;return{state:'unavailable',path,sha:revision,error:'Shared source bytes temporarily reserved for follow-up or pending primary file requests'};}
+    budget.bytes-=size;
     return{state:'available',path,sha:revision,content,contentHash:hash(content),sourceContentHash:hash(value.content),redacted:content!==value.content,lineCount:content.split(/\r?\n/).length,...(sha(value.lastCommitId)?{lastCommitId:value.lastCommitId}:{})};
    }catch(error){if(signal?.aborted)throw signal.reason||Error('Source collection cancelled');return{state:'unavailable',path,sha:revision,error:redact(String(error.message)).slice(0,240)};}
   })();budget.files.set(key,pending);
+  pending.then(()=>{if(reservationDeferred&&budget.files.get(key)===pending)budget.files.delete(key);},()=>{});
  }
  return budget.files.get(key);
 }
@@ -103,11 +115,15 @@ export const sourceEvidenceLimits=Object.freeze({files:4,fileBytes:1500,diffChar
 
 // Collect ordinary application files through the existing immutable reader.
 // Execute nothing, and keep failed/omitted reads explicit.
-export async function bindSourceEvidence({provider,comparisonKind,baseSha,headSha,data,files,complete,client,signal,priorityReferences=[]}){
+export async function bindSourceEvidence({provider,comparisonKind,baseSha,headSha,data,files,complete,client,signal,priorityReferences=[],retainComparisonAnchor=false}){
   const changed=files||data.files||data.diffs||[],name=f=>f.filename||f.new_path||f.old_path||f.path,priorities=new Map();
   for(const [index,ref]of priorityReferences.entries())if(path(ref.path)&&!priorities.has(ref.path))priorities.set(ref.path,index);
   const changedNames=new Set(changed.map(name)),referenced=[...priorities.keys()].filter(p=>!changedNames.has(p)).slice(0,2).map(p=>({path:p,referenceOnly:true}));
-  const selected=[...changed,...referenced].sort((a,b)=>(priorities.get(name(a))??Infinity)-(priorities.get(name(b))??Infinity)).slice(0,sourceEvidenceLimits.files),selectedChanges=selected.filter(f=>!f.referenceOnly);
+  const ranked=[...changed,...referenced].sort((a,b)=>(priorities.get(name(a))??Infinity)-(priorities.get(name(b))??Infinity)),anchor=retainComparisonAnchor?changed.find(f=>sourceTextPath(name(f))&&!f.deleted_file&&f.status!=='removed'):null;
+  // Preserve one immutable comparison frame before untrusted stack references
+  // can consume the entire initial source window. Neither source is causal
+  // proof; remaining capacity still follows the supplied location hints.
+  const selected=(anchor?[anchor,...ranked.filter(f=>name(f)!==name(anchor))]:ranked).slice(0,sourceEvidenceLimits.files),selectedChanges=selected.filter(f=>!f.referenceOnly);
   const proof={provider,comparisonKind,baseSha,headSha,complete:Boolean(complete),sourceFiles:[],sourceCoverage:{available:changed.length,selected:selected.length,omitted:Math.max(0,changed.length-selectedChanges.length),referencedOutsideComparison:selected.length-selectedChanges.length,errors:[]},comparison:{files:selectedChanges.map(f=>({path:name(f),diff:String(f.patch||f.diff||'').slice(0,sourceEvidenceLimits.diffCharacters)}))}};
   // Keep only the discovered review number, not unbounded provider metadata.
   // The collector uses this identity to follow later heads through casework.

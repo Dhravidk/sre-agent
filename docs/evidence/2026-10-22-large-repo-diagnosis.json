@@ -1,0 +1,384 @@
+{
+  "version": 1,
+  "date": "2026-10-22",
+  "scope": "Actual official Codex CLI reasoning with bounded stdin and child tools disabled. Authored vendor transports, deployment/health/compatibility/probe assertions and generated Git history. Separate authored calibration/validation mechanisms, not an externally independent benchmark or live enterprise acceptance.",
+  "mergedParentPullRequest": 2,
+  "baseCommit": "2f2ea32d0d5eb834c7fb7904986de90c9c0d9c7f",
+  "runtimeCommit": "8a41db16f2ccbad085c376921fc480b9ab7678df",
+  "source": {
+    "files": 211,
+    "aggregateSha256": "450a9f923a43850b009cc020c47d71383f42285fb8d139e3dcbe58ac42cffa1f",
+    "allMatchedAfterVerification": true,
+    "coverage": "src/, scripts/, config/, fixtures/, package.json and pnpm-lock.yaml"
+  },
+  "tests": {
+    "node": "24.19.0",
+    "pnpm": "11.25.0",
+    "frozenLockfileInstall": true,
+    "baselinePassed": 2557,
+    "finalPassed": 2562,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 427743.107583,
+    "command": "pnpm test --test-concurrency=3",
+    "idleSleepInhibitedForProcess": true
+  },
+  "negativeReproductions": {
+    "initialSourceReadsRemainingBefore": 0,
+    "initialSourceReadsRemainingAfter": 2,
+    "sourceAttemptLimitUnchanged": 8,
+    "acceptedByteLimitUnchanged": 64000,
+    "bytesPerFileUnchanged": 16000,
+    "explicitFixedProjectRefusedBefore": true,
+    "explicitAndImplicitFixedProjectNowShareReaderAndDedupe": true
+  },
+  "validation": {
+    "status": "passed",
+    "firstPass": true,
+    "responseDrivenTuning": false,
+    "partition": "Five new authored mechanisms separate from two calibration mechanisms; author and reviewer are the implementing agent, not independent reviewers.",
+    "provider": "codex",
+    "cliVersion": "0.163.0-alpha.10.2",
+    "requestedModel": "gpt-6.1-sol",
+    "effort": "medium",
+    "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+    "calls": 14,
+    "validatedResponses": 14,
+    "casesPassed": 5,
+    "checksPerCase": 10,
+    "initialAuthoredRecords": 150000,
+    "initialRequestWitnessPercent": 1,
+    "filesPerRepository": 1200,
+    "changedFilesPerRepository": [
+      {
+        "caseId": "sample-03",
+        "files": 1200,
+        "changedFiles": 38
+      },
+      {
+        "caseId": "sample-04",
+        "files": 1200,
+        "changedFiles": 38
+      },
+      {
+        "caseId": "sample-05",
+        "files": 1200,
+        "changedFiles": 37
+      },
+      {
+        "caseId": "sample-06",
+        "files": 1200,
+        "changedFiles": 37
+      },
+      {
+        "caseId": "sample-07",
+        "files": 1200,
+        "changedFiles": 37
+      }
+    ],
+    "authoredCodeStageChecksMatched": 10,
+    "authorOnlyGoldSha256": "0d38403ec9050f9757a453bb28b504f55aa832395bb6607d05ff77bf49fa80d3",
+    "targetedQueries": 6,
+    "sourceFileReads": 39,
+    "sourceFileReadsPerCase": {
+      "sample-03": 8,
+      "sample-04": 8,
+      "sample-05": 8,
+      "sample-06": 7,
+      "sample-07": 8
+    },
+    "medianInvocationMs": 32436,
+    "maximumInvocationMs": 41112,
+    "maximumSnapshotBytes": 76805,
+    "noExecution": true,
+    "noTeamsIntake": true,
+    "reopenPreserved": true,
+    "causalAndSpecReview": {
+      "reviewer": "implementing agent",
+      "independent": false,
+      "checked": [
+        "Concrete arithmetic/order/offset mechanisms match delivered source and observations.",
+        "Pre-existing defect does not blame the latest deployment.",
+        "Dependency and unknown-contract cases have no candidate application findings.",
+        "Specifications retain controls, falsifying checks and separate affected-data review."
+      ]
+    },
+    "cases": [
+      {
+        "caseId": "sample-03",
+        "status": "passed",
+        "calls": 3,
+        "elapsedMs": 93923,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true,
+          "attributionClass": true,
+          "noFalseCandidateFiles": true
+        },
+        "changeAssessment": "likely",
+        "remediation": "rollback-candidate",
+        "sourceFindings": [
+          {
+            "path": "packages/archive/rules/cursor.mjs",
+            "sha": "7f838a840dd1beaa2676588035c8497289ac2c48",
+            "startLine": 2,
+            "endLine": 2
+          }
+        ],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/process/archive"
+              }
+            ],
+            "complete": true,
+            "records": 6
+          }
+        ]
+      },
+      {
+        "caseId": "sample-04",
+        "status": "passed",
+        "calls": 3,
+        "elapsedMs": 97714,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true,
+          "attributionClass": true,
+          "noFalseCandidateFiles": true
+        },
+        "changeAssessment": "likely",
+        "remediation": "forward-fix",
+        "sourceFindings": [
+          {
+            "path": "packages/reconciliation/rules/sequence.mjs",
+            "sha": "374e62388244ffc103fa3206a008ecc6ac011362",
+            "startLine": 2,
+            "endLine": 2
+          }
+        ],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/process/reconciliation"
+              }
+            ],
+            "complete": true,
+            "records": 6
+          }
+        ]
+      },
+      {
+        "caseId": "sample-05",
+        "status": "passed",
+        "calls": 3,
+        "elapsedMs": 87344,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true,
+          "attributionClass": true,
+          "noFalseCandidateFiles": true
+        },
+        "changeAssessment": "unlikely",
+        "remediation": "forward-fix",
+        "sourceFindings": [
+          {
+            "path": "packages/settlement/rules/business-day.mjs",
+            "sha": "cc7feffa3847779de796afbd1ab41594c8779e79",
+            "startLine": 1,
+            "endLine": 3
+          }
+        ],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/process/settlement"
+              }
+            ],
+            "complete": true,
+            "records": 6
+          }
+        ]
+      },
+      {
+        "caseId": "sample-06",
+        "status": "passed",
+        "calls": 2,
+        "elapsedMs": 64498,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true,
+          "attributionClass": true,
+          "noFalseCandidateFiles": true
+        },
+        "changeAssessment": "unlikely",
+        "remediation": "dependency-mitigation",
+        "sourceFindings": [],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/process/fulfilment"
+              }
+            ],
+            "complete": true,
+            "records": 8
+          }
+        ]
+      },
+      {
+        "caseId": "sample-07",
+        "status": "passed",
+        "calls": 3,
+        "elapsedMs": 106059,
+        "checks": {
+          "actualProvider": true,
+          "followUpLogRead": true,
+          "exactSource": true,
+          "recoveryStrategy": true,
+          "rollbackTarget": true,
+          "attribution": true,
+          "followUpCited": true,
+          "developerSpec": true,
+          "attributionClass": true,
+          "noFalseCandidateFiles": true
+        },
+        "changeAssessment": "unknown",
+        "remediation": "collect-evidence",
+        "sourceFindings": [],
+        "readSelections": [
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/process/invoicing"
+              }
+            ],
+            "complete": true,
+            "records": 0
+          },
+          {
+            "filters": [
+              {
+                "field": "http.route",
+                "value": "/process/invoicing"
+              }
+            ],
+            "complete": true,
+            "records": 6
+          }
+        ]
+      }
+    ]
+  },
+  "developmentHistory": [
+    {
+      "run": "calibration-v1",
+      "status": "failed",
+      "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+      "calls": 5,
+      "validatedResponses": 4,
+      "casesPassed": [],
+      "failedCases": [
+        "sample-01",
+        "sample-02"
+      ],
+      "failedCalls": [
+        {
+          "ordinal": 5,
+          "error": "Codex evaluation cancelled",
+          "elapsedMs": 570027
+        }
+      ],
+      "note": "Failed development run: explicit fixed-project requests were refused; the second assessment was cancelled across recorded host sleep."
+    },
+    {
+      "run": "calibration-v2",
+      "status": "failed",
+      "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+      "calls": 4,
+      "validatedResponses": 3,
+      "casesPassed": [
+        "sample-01"
+      ],
+      "failedCases": [
+        "sample-02"
+      ],
+      "failedCalls": [
+        {
+          "ordinal": 4,
+          "error": "Codex evaluation cancelled",
+          "elapsedMs": 575246
+        }
+      ],
+      "note": "After the selector fix, sample-01 passed; sample-02 was cancelled across another recorded host sleep. Not a complete two-case result."
+    },
+    {
+      "run": "calibration-02-resume",
+      "status": "passed",
+      "promptHash": "3436a649bb57313e7e0655a54518bce1c870412427d5733e9275f7c5cfc9c757",
+      "calls": 3,
+      "validatedResponses": 3,
+      "casesPassed": [
+        "sample-02"
+      ],
+      "failedCases": [],
+      "failedCalls": [],
+      "note": "Fresh single-case completion of sample-02 with idle sleep inhibited. This is not a rerun or tuning of validation cases."
+    }
+  ],
+  "earlierFullSuite": {
+    "passed": 2558,
+    "failed": 3,
+    "durationMs": 773820.591667,
+    "failingFiles": [
+      "tests/sre-group-burst.test.mjs",
+      "tests/sre-log-window.test.mjs",
+      "tests/sre-plan-context.test.mjs"
+    ],
+    "note": "Timing/deadline failures during recorded host sleep. Preserved, not suppressed. Final full suite rerun separately from live inference with idle sleep inhibited and file-level concurrency 3; no assertions/deadlines were weakened."
+  },
+  "remaining": [
+    "Read-only Dynatrace tenant field/DQL/auth/sampling/completeness/cost acceptance.",
+    "Actual GitLab permissions and runtime-to-project/commit/artifact binding.",
+    "Independent review of representative sanitized real incidents and complex enterprise source.",
+    "Claude comparison when the approved route is available; Codex does not establish Claude acceptance."
+  ],
+  "deferred": [
+    "Teams communication",
+    "Jira/ServiceNow/Confluence connector work",
+    "Deployment execution and external ticket/MR writes"
+  ]
+}

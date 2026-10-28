@@ -11,6 +11,15 @@ test('exact follow-up source is atomically retained with its outcome and deliver
  const h=await harness();try{assert.equal(await h.followup.run([file(h.f.manifest.head)],h.context,0),true);const c=await h.f.r.store.context(h.f.id),events=c.evidence.filter(row=>row.kind==='evidence_read');assert.equal(events.length,2);const outcome=events.find(row=>row.content.phase==='collected');assert.ok(c.evidence.some(row=>row.id===outcome.content.sourceEvidenceId));const view=boundedContext(c),source=view.sourceCode.files.find(f=>f.path==='src/ledger/retry.py');assert.equal(source.side,'requested-source');assert.equal(source.lines[1].text,'    return isinstance(error, RuntimeError)');assert.equal(view.evidence.find(row=>row.id===source.evidenceId).content.requestedSource.file.content,undefined);const finding={evidenceId:source.evidenceId,provider:'gitlab',project:source.project,sha:source.sha,path:source.path,startLine:2,endLine:2,quote:source.lines[1].text,explanation:'Compare this predicate with the actual exception; cause is unknown.'};assert.equal(validateSourceFindings([finding],c,view)[0].verifiedLocation,true);
  }finally{await h.f.close();}
 });
+test('an explicit fixed project is the same scoped selector as its omitted form and survives retained-source validation',async()=>{
+ const h=await harness();try{
+  const request=file(h.f.manifest.head),project=h.f.service.gitlab.project,count=h.f.calls.length;
+  await h.followup.run([{...request,project},request],h.context,0);
+  assert.deepEqual(h.followup.results.map(row=>row.phase),['collected','duplicate']);assert.equal(h.f.calls.length-count,1);assert.equal(h.budget.reads,7);
+  const c=await h.f.r.store.context(h.f.id),view=boundedContext(c),source=view.sourceCode.files.find(row=>row.side==='requested-source');assert.ok(source);assert.equal(source.project,project);
+  const artifact=c.evidence.find(row=>row.id===source.evidenceId).content.requestedSource;assert.equal(Object.hasOwn(artifact.request,'project'),false);assert.equal(artifact.project,project);assert.equal(artifact.discoveryScopeKey,undefined);
+ }finally{await h.f.close();}
+});
 test('unseen revisions, traversal, URLs and excessive line ranges are refused without invoking a file reader',async()=>{
  const h=await harness();try{const count=h.f.calls.length;for(const request of [file('c'.repeat(40)),file(h.f.manifest.head,{project:'foreign/project'}),file(h.f.manifest.head,{path:'../secret.py'}),file(h.f.manifest.head,{path:'https://foreign/secret.py'}),file(h.f.manifest.head,{endLine:100})])await h.followup.run([request],h.context,0);assert.equal(h.f.calls.length,count);assert.ok(h.followup.results.every(r=>r.phase==='refused'));assert.equal((await h.f.r.store.db.query("SELECT id FROM sre_evidence WHERE kind='source_requested'")).length,0);
  }finally{await h.f.close();}

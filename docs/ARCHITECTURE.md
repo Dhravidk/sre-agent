@@ -46,6 +46,7 @@ The [dispatch design](DISPATCH-DESIGN.md) is a separate proposal for multiple in
 | Polling, normalization, source lifecycle and scope | `src/sre/poller.mjs`, `log-read-receipt.mjs`, `normalize.mjs`, `source-state.mjs`, `poll-scope.mjs` |
 | Investigations and bounded model context | `src/sre/worker.mjs`, `reasoner.mjs`, `claude-reasoner.mjs`, `claude-config.mjs`, `model-context.mjs` |
 | Scoped diagnostic log follow-ups | `src/sre/evidence-followup.mjs`, `diagnostic-log-query.mjs`, `evidence-read-history.mjs`; [milestone and limits](DYNATRACE-GITLAB-DIAGNOSIS.md) |
+| Source allocation for imported helpers | `src/sre/worker.mjs`, `source-evidence.mjs`, `evidence-followup.mjs`; [larger-repository evaluation](DYNATRACE-LARGE-REPOSITORIES.md) |
 | Teams identity/routing, delivery, coordination and handoffs | `src/sre/teams.mjs`, `teams-access.mjs`, `teams-routing.mjs`, `teams-outbox.mjs`, `collaboration.mjs`, `work-handoffs.mjs` |
 | Ownership, plans, local QA and change history | `src/sre/casework.mjs`, `qa-approval.mjs`, `change-read.mjs`, `change-associations.mjs`, `change-timeline.mjs`, `ci-observations.mjs`, `ci-history-window.mjs`, `change-observation-notices.mjs` |
 | Telemetry groups, log triggers and analytic checks | `src/sre/log-detection.mjs`, `log-admission.mjs`, `log-observation.mjs`, `signal-digest.mjs`, `comparison-window.mjs`, `monitors.mjs`, `analytic-risk.mjs`, `rule-attribution.mjs` |
@@ -179,6 +180,8 @@ An optional reviewed `logLocations` field mapping can select exact-ref files abs
 ### Host-controlled follow-up evidence
 
 An explicit per-service opt-in permits bounded source/log proposals between reasoning invocations. The host fixes scope, shares the initial source budget, persists started/outcome receipts under the existing lease/revision/restore fences, and refreshes the bounded snapshot. Artifacts and terminal receipts are atomic; stale responses cannot bypass final publication. Unknown or partial reads stay uncertain across restart. The child has no connector tools or credentials. This adds no schema, dispatcher, concurrency or action authority. See [follow-up evidence](EVIDENCE-FOLLOWUP.md) for limits and acceptance boundaries.
+
+The multi-file slice permits three follow-up rounds and six proposals, including caller → adapter → helper reads. Initial model collection reserves four attempts and 48,000 accepted bytes within the unchanged eight-file-attempt/64,000-byte budget; two diagnostic log queries and the shared investigation deadline remain unchanged. Temporary reservation-only rejections do not poison the immutable-file cache. Stop older investigators before upgrading because terminal-limit receipts can now use round three. [Multi-file diagnosis](DYNATRACE-MULTIFILE-DIAGNOSIS.md) separates code-backed authored checks, actual model responses and remaining vendor acceptance.
 
 ### Reconstructing unpublished read outcomes
 
